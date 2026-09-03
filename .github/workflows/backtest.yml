@@ -1,0 +1,44 @@
+name: Stock Backtest
+
+on:
+  workflow_dispatch:   # GitHubアプリの「Run workflow」ボタンから手動実行できるようにする
+  # 定期実行したい場合は以下のコメントを外す（例: 毎日 日本時間7:00 = UTC 22:00）
+  # schedule:
+  #   - cron: '0 22 * * *'
+
+permissions:
+  contents: write   # CSVをリポジトリにコミットするために書き込み権限が必要
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: |
+          pip install yfinance pandas numpy requests openpyxl
+
+      - name: バックテストを実行してCSVを生成
+        run: python backtest_csv.py
+
+      - name: 結果CSVをリポジトリにコミット
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add output/trade_log.csv
+          # 変更がない場合はコミットをスキップ（エラー回避）
+          git diff --staged --quiet && echo "変更なし、コミットをスキップ" || git commit -m "バックテスト結果を更新 $(date +'%Y-%m-%d %H:%M')"
+          git push
+
+      - name: Artifactとしても保存（念のため）
+        uses: actions/upload-artifact@v4
+        with:
+          name: trade-log-csv
+          path: output/trade_log.csv
