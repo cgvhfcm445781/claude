@@ -23,7 +23,7 @@ jobs:
 
       - name: 依存パッケージをインストール
         run: |
-          pip install yfinance pandas numpy requests openpyxl xlrd
+          pip install yfinance pandas numpy requests openpyxl xlrd scipy
 
       - name: バックテストを実行してCSVを生成
         run: python backtest_csv.py
