@@ -32,6 +32,10 @@ jobs:
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
+          if [ ! -f output/trade_log.csv ]; then
+            echo "⚠ output/trade_log.csv が存在しません（トレードが0件だった可能性）。コミットをスキップします。"
+            exit 0
+          fi
           git add output/trade_log.csv
           # 変更がない場合はコミットをスキップ（エラー回避）
           git diff --staged --quiet && echo "変更なし、コミットをスキップ" || git commit -m "バックテスト結果を更新 $(date +'%Y-%m-%d %H:%M')"
@@ -39,6 +43,8 @@ jobs:
 
       - name: Artifactとしても保存（念のため）
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: trade-log-csv
           path: output/trade_log.csv
+          if-no-files-found: warn
