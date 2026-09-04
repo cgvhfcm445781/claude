@@ -23,6 +23,15 @@ STOCH_D_PERIOD = 3
 STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
+# --- 追加フィルタ（過去データ分析から導出） ---
+USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
+NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
+EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
+MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
+
+# --- ウォークフォワード検証の区切り年 ---
+WALKFORWARD_SPLIT_YEAR = 2025  # この年より前を「学習期間」、以降を「検証期間」として比較
+
 # --- CSV出力設定 ---
 OUTPUT_DIR = "output"
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "trade_log.csv")
@@ -180,18 +189,29 @@ if __name__ == "__main__":
                     golden_cross = (d_1 <= sd_1) and (d_0 > sd_0)
 
                     if touch_oversold and golden_cross:
+                        entry_dt = df_d.index[i]
+                        nk_dev = df_nk.loc[entry_dt, 'nk_sma25_dev'] if entry_dt in df_nk.index else np.nan
+                        vr_today = float(vol_ratio.iloc[i])
+                        next_weekday = df_d.index[i + 1].weekday()  # 0=月, 1=火 ...
+
+                        # --- 追加フィルタ判定（分析結果に基づく） ---
+                        if USE_ENTRY_FILTERS:
+                            if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
+                                continue  # 日経が十分売り込まれていない日は見送り
+                            if EXCLUDE_TUESDAY and next_weekday == 1:
+                                continue  # 火曜エントリーは見送り
+                            if vr_today < MIN_VOLUME_RATIO:
+                                continue  # 出来高が薄すぎる銘柄は見送り
+
                         if tomorrow_open * 100 <= INITIAL_CASH:
                             is_holding = True
                             e_price = tomorrow_open
                             m_price = tomorrow_open
                             e_date = df_d.index[i + 1]
 
-                            entry_dt = df_d.index[i]
-                            nk_dev = df_nk.loc[entry_dt, 'nk_sma25_dev'] if entry_dt in df_nk.index else np.nan
-
                             entry_meta = {
                                 'rsi_14': float(rsi_14.iloc[i]),
-                                'volume_ratio': float(vol_ratio.iloc[i]),
+                                'volume_ratio': vr_today,
                                 'sma25_dev': float(sma25_dev.iloc[i]),
                                 'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None
                             }
@@ -231,7 +251,7 @@ if __name__ == "__main__":
                             market_perf[market]['trades'] += 1
                             if profit > 0: market_perf[market]['wins'] += 1
 
-                        if curr_year in [2024, 2025, 2026]:
+                        if curr_year in [2023, 2024, 2025, 2026]:
                             trade_log_list.append({
                                 'ticker': ticker, 'name': name, 'sector': sector, 'market': market,
                                 'entry': e_date.strftime('%Y-%m-%d'),
@@ -261,7 +281,31 @@ if __name__ == "__main__":
         df_log['is_win'] = df_log['profit'].apply(lambda x: 1 if x > 0 else 0)
 
         export_to_csv(df_log)
+
+        # --- ウォークフォワード検証：学習期間 vs 検証期間で成績を比較 ---
+        df_log['entry_year'] = pd.to_datetime(df_log['entry']).dt.year
+        train = df_log[df_log['entry_year'] < WALKFORWARD_SPLIT_YEAR]
+        test = df_log[df_log['entry_year'] >= WALKFORWARD_SPLIT_YEAR]
+
+        def _summary(g, label):
+            if len(g) == 0:
+                print(f"  {label}: トレードなし")
+                return
+            win_rate = g['is_win'].mean() * 100
+            avg_profit = g['profit'].mean()
+            total_profit = g['profit'].sum()
+            print(f"  {label}: 件数={len(g)}, 勝率={win_rate:.1f}%, "
+                  f"平均損益={avg_profit:,.0f}円, 合計損益={total_profit:,.0f}円")
+
+        print(f"\n=== ウォークフォワード検証（フィルタ適用: {USE_ENTRY_FILTERS}） ===")
+        print(f"条件: 日経25日線乖離 <= {NIKKEI_DEV_THRESHOLD}%, "
+              f"火曜除外={EXCLUDE_TUESDAY}, 出来高比率 >= {MIN_VOLUME_RATIO}")
+        _summary(train, f"学習期間（〜{WALKFORWARD_SPLIT_YEAR - 1}年）")
+        _summary(test, f"検証期間（{WALKFORWARD_SPLIT_YEAR}年〜、未知データ）")
+        print("学習期間と検証期間で勝率・平均損益が大きく変わらなければ、条件が過去データへの")
+        print("過剰最適化ではなく、ある程度将来にも通用する可能性が高いと判断できます。")
     else:
         print("\n⚠ トレードが1件も発生しませんでした。CSVは出力されません。")
+        print("   （フィルタ条件が厳しすぎる可能性があります。USE_ENTRY_FILTERS = False で確認できます）")
 
     print(f"\n総実行時間: {time.time() - start_time:.1f}秒")
