@@ -24,7 +24,7 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
-USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
+USE_ENTRY_FILTERS = False    # Falseにすれば元の条件のみに戻せる
 NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
@@ -122,7 +122,7 @@ if __name__ == "__main__":
     market_perf = {'プライム': {'profit': 0, 'trades': 0, 'wins': 0}}
 
     print("日経平均データを取得中...")
-    df_nk = yf.download("^N225", period="6y", interval="1d", progress=False, repair=True)
+    df_nk = yf.download("^N225", period="10y", interval="1d", progress=False, repair=True)
     if isinstance(df_nk.columns, pd.MultiIndex):
         df_nk.columns = df_nk.columns.get_level_values(0)
     nk_sma25 = df_nk['Close'].rolling(window=25).mean()
@@ -137,7 +137,7 @@ if __name__ == "__main__":
             sector_perf[sector] = {'profit': 0, 'trades': 0, 'wins': 0}
 
         try:
-            df_d = yf.download(ticker, period="6y", interval="1d", progress=False, repair=True)
+            df_d = yf.download(ticker, period="10y", interval="1d", progress=False, repair=True)
             if df_d.empty or len(df_d) < 30: continue
             if isinstance(df_d.columns, pd.MultiIndex): df_d.columns = df_d.columns.get_level_values(0)
 
@@ -251,7 +251,7 @@ if __name__ == "__main__":
                             market_perf[market]['trades'] += 1
                             if profit > 0: market_perf[market]['wins'] += 1
 
-                        if curr_year in [2023, 2024, 2025, 2026]:
+                        if True:  # ダウンロードした全期間を対象にする（年の制限を撤廃）
                             trade_log_list.append({
                                 'ticker': ticker, 'name': name, 'sector': sector, 'market': market,
                                 'entry': e_date.strftime('%Y-%m-%d'),
