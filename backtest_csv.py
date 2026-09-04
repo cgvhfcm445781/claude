@@ -24,10 +24,19 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
-USE_ENTRY_FILTERS = False    # Falseにすれば元の条件のみに戻せる
+USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
 NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
+
+# --- 既知の暴落期間の除外リスト ---
+# 「日経-5%乖離で買う」は通常の調整局面では機能するが、コロナショックのような
+# 急激かつ継続的な暴落では逆効果（下げ止まらず損切り連発）だったため、
+# 過去に判明している大暴落期間はエントリー対象から除外する。
+# 似たような急落が将来起きた場合、ここに期間を手動で追加することを想定。
+CRISIS_PERIODS = [
+    ("2020-02-20", "2020-05-31"),  # コロナショック
+]
 
 # --- ウォークフォワード検証の区切り年 ---
 WALKFORWARD_SPLIT_YEAR = 2025  # この年より前を「学習期間」、以降を「検証期間」として比較
@@ -87,6 +96,14 @@ def calculate_stochastics(df, k_period=9, d_period=3, sd_period=3):
     stoch_d = fast_k.rolling(window=d_period).mean()
     slow_d = stoch_d.rolling(window=sd_period).mean()
     return stoch_d, slow_d
+
+
+def is_crisis_period(dt):
+    """指定した日付が既知の暴落期間に含まれるかを判定"""
+    for start, end in CRISIS_PERIODS:
+        if pd.Timestamp(start) <= dt <= pd.Timestamp(end):
+            return True
+    return False
 
 
 def calculate_rsi(series, period=14):
@@ -202,6 +219,8 @@ if __name__ == "__main__":
                                 continue  # 火曜エントリーは見送り
                             if vr_today < MIN_VOLUME_RATIO:
                                 continue  # 出来高が薄すぎる銘柄は見送り
+                            if is_crisis_period(entry_dt):
+                                continue  # 既知の暴落期間は見送り
 
                         if tomorrow_open * 100 <= INITIAL_CASH:
                             is_holding = True
