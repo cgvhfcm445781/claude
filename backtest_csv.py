@@ -24,7 +24,7 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
-USE_ENTRY_FILTERS = False     # Falseにすれば元の条件のみに戻せる
+USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
 NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
