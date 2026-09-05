@@ -23,7 +23,7 @@ EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
-NOTIFY_ON_EMPTY = False  # 該当銘柄が0件の日も通知するか
+NOTIFY_ON_EMPTY = True  # 該当銘柄が0件の日も通知するか
 
 
 def get_jpx_stock_list():
