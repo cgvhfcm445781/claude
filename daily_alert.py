@@ -19,7 +19,7 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 NIKKEI_DEV_THRESHOLD = 50.0  #元-5.0
-EXCLUDE_TUESDAY = True
+EXCLUDE_TUESDAY = False  #元True
 MIN_VOLUME_RATIO = 0.5
 
 # --- スコアリングモデル（ロジスティック回帰、4,534トレードで学習） ---
