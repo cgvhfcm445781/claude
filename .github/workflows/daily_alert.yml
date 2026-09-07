@@ -2,10 +2,10 @@ name: Daily Signal Alert
 
 on:
   workflow_dispatch:   # 手動実行（テスト用）
-  #schedule:
+  schedule:
     # 日本時間 平日16:00頃 = UTC 07:00（cronはUTC基準）
     # 月〜金の場合、UTC 07:00 は 月〜金の日本時間16:00に対応
-    #- cron: '0 7 * * 1-5'
+    - cron: '0 7 * * 1-5'
 
 jobs:
   daily-alert:
@@ -21,7 +21,7 @@ jobs:
 
       - name: 依存パッケージをインストール
         run: |
-          pip install yfinance pandas numpy requests openpyxl xlrd scipy
+          pip install yfinance pandas numpy requests openpyxl xlrd scipy scikit-learn
 
       - name: シグナルチェック＆Discord通知
         env:
