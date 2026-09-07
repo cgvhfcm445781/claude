@@ -115,6 +115,9 @@ if __name__ == "__main__":
     start_time = time.time()
     print("日経平均データを取得中...")
     df_nk = yf.download("^N225", period="3mo", interval="1d", progress=False, repair=True)
+    if df_nk.empty:
+        raise RuntimeError("日経平均データの取得に失敗しました（空のデータが返ってきました）。"
+                            "依存パッケージ（特にscikit-learn）が正しくインストールされているか確認してください。")
     if isinstance(df_nk.columns, pd.MultiIndex):
         df_nk.columns = df_nk.columns.get_level_values(0)
     nk_sma25 = df_nk['Close'].rolling(window=25).mean()
