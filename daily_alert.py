@@ -22,6 +22,33 @@ NIKKEI_DEV_THRESHOLD = -5.0
 EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
 
+# --- スコアリングモデル（ロジスティック回帰、4,534トレードで学習） ---
+# 数値特徴量は標準化してから係数を掛ける
+SCORE_FEATURE_MEAN = {'rsi_14': 29.917, 'volume_ratio': 1.309, 'sma25_dev': -8.527}
+SCORE_FEATURE_SCALE = {'rsi_14': 10.038, 'volume_ratio': 0.612, 'sma25_dev': 5.431}
+SCORE_COEF = {'rsi_14': 0.3888, 'volume_ratio': -0.0139, 'sma25_dev': -0.5889}
+SCORE_INTERCEPT = 0.7385
+# 業種ボーナス（採用件数が少ない業種は 0 = 「その他」扱い）
+SECTOR_SCORE = {
+    '不動産業': 0.4547, '建設業': 0.5451, '銀行業': 0.5417, 'その他金融業': 0.2995,
+    '食料品': 0.3266, '医薬品': 0.2389, '非鉄金属': 0.2156, 'その他製品': 0.1830,
+    '輸送用機器': 0.1002, '陸運業': 0.0591, '卸売業': 0.0285, '化学': 0.0164,
+    '繊維製品': -0.0118, '情報・通信業': -0.0146, 'ゴム製品': 0.0242,
+    '金属製品': -0.1131, '鉄鋼': -0.1100, 'ガラス・土石製品': -0.1807,
+    'サービス業': -0.1693, '機械': -0.1923, '電気機器': -0.2078,
+    '小売業': -0.2376, '電気・ガス業': -0.3017, '精密機器': -0.4338,
+}
+
+
+def win_probability_score(rsi_14, volume_ratio, sma25_dev, sector):
+    """過去データから学習したロジスティック回帰で、勝率の期待値を算出（0〜1）"""
+    z = SCORE_INTERCEPT
+    z += (rsi_14 - SCORE_FEATURE_MEAN['rsi_14']) / SCORE_FEATURE_SCALE['rsi_14'] * SCORE_COEF['rsi_14']
+    z += (volume_ratio - SCORE_FEATURE_MEAN['volume_ratio']) / SCORE_FEATURE_SCALE['volume_ratio'] * SCORE_COEF['volume_ratio']
+    z += (sma25_dev - SCORE_FEATURE_MEAN['sma25_dev']) / SCORE_FEATURE_SCALE['sma25_dev'] * SCORE_COEF['sma25_dev']
+    z += SECTOR_SCORE.get(sector, 0.0)
+    return 1 / (1 + np.exp(-z))
+
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 NOTIFY_ON_EMPTY = True  # 該当銘柄が0件の日も通知するか
 
@@ -164,14 +191,19 @@ if __name__ == "__main__":
             if vr_today < MIN_VOLUME_RATIO:
                 continue
 
+            rsi_today = float(rsi_14.iloc[-1])
+            sma_dev_today = float(sma25_dev.iloc[-1])
+            win_prob = win_probability_score(rsi_today, vr_today, sma_dev_today, sector)
+
             hits.append({
                 'ticker': ticker,
                 'name': name,
                 'sector': sector,
                 'close': close,
-                'rsi_14': round(float(rsi_14.iloc[-1]), 1),
+                'rsi_14': round(rsi_today, 1),
                 'volume_ratio': round(vr_today, 2),
-                'sma25_dev': round(float(sma25_dev.iloc[-1]), 2),
+                'sma25_dev': round(sma_dev_today, 2),
+                'win_prob': win_prob,
             })
         except Exception:
             continue
@@ -182,14 +214,15 @@ if __name__ == "__main__":
     print(f"\n該当銘柄数: {len(hits)}")
 
     if hits:
+        hits.sort(key=lambda h: h['win_prob'], reverse=True)  # 勝率スコアが高い順に並べ替え
         lines = [
-            f"📈 **買いシグナル検出** （{latest_nk_date.date()}終値時点、翌営業日エントリー候補）",
-            f"日経25日線乖離: {latest_nk_dev:.2f}%\n",
+            f"📈 **買いシグナル検出**（{latest_nk_date.date()}終値時点、翌営業日エントリー候補）",
+            f"日経25日線乖離: {latest_nk_dev:.2f}%　※勝率スコアが高い順に表示\n",
         ]
         for h in hits:
             lines.append(
-                f"・`{h['ticker']}` {h['name']}（{h['sector']}）"
-                f" 終値{h['close']:.0f}円 / RSI{h['rsi_14']} / 出来高比{h['volume_ratio']} / 25日線乖離{h['sma25_dev']}%"
+                f"・`{h['ticker']}` {h['name']}（{h['sector']}） 推定勝率{h['win_prob']*100:.0f}%\n"
+                f"　終値{h['close']:.0f}円 / RSI{h['rsi_14']} / 出来高比{h['volume_ratio']} / 25日線乖離{h['sma25_dev']}%"
             )
         message = "\n".join(lines)
         print(message)
