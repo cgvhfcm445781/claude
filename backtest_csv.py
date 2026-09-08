@@ -24,7 +24,7 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
-USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
+USE_ENTRY_FILTERS = False    # Falseにすれば元の条件のみに戻せる
 NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
@@ -211,6 +211,13 @@ if __name__ == "__main__":
                         vr_today = float(vol_ratio.iloc[i])
                         next_weekday = df_d.index[i + 1].weekday()  # 0=月, 1=火 ...
 
+                        # --- 陰線／前日比終値判定（今回の検証用フラグ） ---
+                        open_today = float(df_d['Open'].iloc[i])
+                        close_today = close
+                        close_prev = float(df_d['Close'].iloc[i - 1])
+                        is_bearish = 1 if close_today < open_today else 0          # 陰線（始値より終値が低い）
+                        is_close_down = 1 if close_today < close_prev else 0        # 終値が前日より低い
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -232,7 +239,9 @@ if __name__ == "__main__":
                                 'rsi_14': float(rsi_14.iloc[i]),
                                 'volume_ratio': vr_today,
                                 'sma25_dev': float(sma25_dev.iloc[i]),
-                                'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None
+                                'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None,
+                                'is_bearish': is_bearish,
+                                'is_close_down': is_close_down,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -282,7 +291,9 @@ if __name__ == "__main__":
                                 'volume_ratio': round(entry_meta.get('volume_ratio', 0), 2),
                                 'sma25_dev': round(entry_meta.get('sma25_dev', 0), 2),
                                 'nikkei_sma25_dev': round(entry_meta.get('nikkei_sma25_dev', 0), 2) if entry_meta.get(
-                                    'nikkei_sma25_dev') is not None else None
+                                    'nikkei_sma25_dev') is not None else None,
+                                'is_bearish': entry_meta.get('is_bearish', 0),
+                                'is_close_down': entry_meta.get('is_close_down', 0),
                             })
                         is_holding = False
         except Exception as e:
