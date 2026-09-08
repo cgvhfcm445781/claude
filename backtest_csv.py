@@ -211,12 +211,22 @@ if __name__ == "__main__":
                         vr_today = float(vol_ratio.iloc[i])
                         next_weekday = df_d.index[i + 1].weekday()  # 0=月, 1=火 ...
 
-                        # --- 陰線／前日比終値判定（今回の検証用フラグ） ---
+                        # --- 陰線／前日比終値判定（検証用フラグ） ---
                         open_today = float(df_d['Open'].iloc[i])
                         close_today = close
                         close_prev = float(df_d['Close'].iloc[i - 1])
+                        high_today = float(df_d['High'].iloc[i])
+                        low_today = float(df_d['Low'].iloc[i])
                         is_bearish = 1 if close_today < open_today else 0          # 陰線（始値より終値が低い）
                         is_close_down = 1 if close_today < close_prev else 0        # 終値が前日より低い
+
+                        # --- ローソク足の形状（連続値で記録し、閾値は後から自由に検証） ---
+                        day_range = max(high_today - low_today, 1e-6)
+                        body_top = max(open_today, close_today)
+                        body_bottom = min(open_today, close_today)
+                        lower_shadow_ratio = (body_bottom - low_today) / day_range   # 下ヒゲの割合（0〜1）
+                        upper_shadow_ratio = (high_today - body_top) / day_range     # 上ヒゲの割合（0〜1）
+                        body_ratio = (body_top - body_bottom) / day_range           # 実体の割合（0〜1）
 
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
@@ -242,6 +252,9 @@ if __name__ == "__main__":
                                 'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None,
                                 'is_bearish': is_bearish,
                                 'is_close_down': is_close_down,
+                                'lower_shadow_ratio': round(lower_shadow_ratio, 3),
+                                'upper_shadow_ratio': round(upper_shadow_ratio, 3),
+                                'body_ratio': round(body_ratio, 3),
                             }
                 else:
                     m_price = max(m_price, close)
@@ -294,6 +307,9 @@ if __name__ == "__main__":
                                     'nikkei_sma25_dev') is not None else None,
                                 'is_bearish': entry_meta.get('is_bearish', 0),
                                 'is_close_down': entry_meta.get('is_close_down', 0),
+                                'lower_shadow_ratio': entry_meta.get('lower_shadow_ratio', 0),
+                                'upper_shadow_ratio': entry_meta.get('upper_shadow_ratio', 0),
+                                'body_ratio': entry_meta.get('body_ratio', 0),
                             })
                         is_holding = False
         except Exception as e:
