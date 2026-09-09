@@ -106,6 +106,60 @@ def is_crisis_period(dt):
     return False
 
 
+def detect_msb_ob(df_d, i, pivot_window=3, lookback=40):
+    """
+    簡易版 MSB（Market Structure Break）/ OB（Order Block）判定。
+    - スイングハイ：前後 pivot_window 本より高値が高い足（確定には pivot_window 本の経過が必要）
+    - MSB：直近のスイングハイが1つ前のスイングハイより低い（下降構造＝安値・高値切り下げ）状態から、
+           その後の値動きが直近スイングハイを上抜けたら「構造の転換」とみなす
+    - OB：MSBを起こした上昇の起点から遡って最後の陰線を「注文が溜まっていたゾーン」とみなす
+    - in_ob_zone：当日の値幅がそのOBのレンジと重なっていれば「押し目でOBに戻ってきた」と判定
+    未来の情報は使わず、日 i 時点で確定済みの情報のみで判定する（先読みなし）。
+    """
+    highs = df_d['High'].values
+    lows = df_d['Low'].values
+    opens = df_d['Open'].values
+    closes = df_d['Close'].values
+
+    start = max(pivot_window, i - lookback)
+    end = i - 1 - pivot_window  # 日 i-1 時点で確定しているスイングハイの最終候補
+    if end <= start:
+        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}
+
+    swing_highs = [k for k in range(start, end + 1)
+                   if highs[k] == highs[k - pivot_window:k + pivot_window + 1].max()]
+    if len(swing_highs) < 2:
+        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}
+
+    sh_prior, sh_recent = swing_highs[-2], swing_highs[-1]
+    if highs[sh_recent] >= highs[sh_prior]:
+        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}  # 高値切り上げ＝下降構造でない
+
+    # 直近スイングハイを上抜けたポイントを探す（先読みなし：sh_recent より後、i まで）
+    break_idx = None
+    for j in range(sh_recent + 1, i + 1):
+        if highs[j] > highs[sh_recent]:
+            break_idx = j
+            break
+    if break_idx is None:
+        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}
+
+    # 上抜けを起こした上昇の起点から遡り、最後の陰線をOB候補とする
+    ob_idx = None
+    for j in range(break_idx - 1, sh_recent - 1, -1):
+        if closes[j] < opens[j]:
+            ob_idx = j
+            break
+
+    in_ob_zone = 0
+    if ob_idx is not None:
+        ob_low, ob_high = lows[ob_idx], highs[ob_idx]
+        if lows[i] <= ob_high and highs[i] >= ob_low:
+            in_ob_zone = 1
+
+    return {'msb_confirmed': 1, 'in_ob_zone': in_ob_zone, 'bars_since_msb': i - break_idx}
+
+
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -211,6 +265,26 @@ if __name__ == "__main__":
                         vr_today = float(vol_ratio.iloc[i])
                         next_weekday = df_d.index[i + 1].weekday()  # 0=月, 1=火 ...
 
+                        # --- 陰線／前日比終値判定（検証用フラグ） ---
+                        open_today = float(df_d['Open'].iloc[i])
+                        close_today = close
+                        close_prev = float(df_d['Close'].iloc[i - 1])
+                        high_today = float(df_d['High'].iloc[i])
+                        low_today = float(df_d['Low'].iloc[i])
+                        is_bearish = 1 if close_today < open_today else 0          # 陰線（始値より終値が低い）
+                        is_close_down = 1 if close_today < close_prev else 0        # 終値が前日より低い
+
+                        # --- ローソク足の形状（連続値で記録し、閾値は後から自由に検証） ---
+                        day_range = max(high_today - low_today, 1e-6)
+                        body_top = max(open_today, close_today)
+                        body_bottom = min(open_today, close_today)
+                        lower_shadow_ratio = (body_bottom - low_today) / day_range   # 下ヒゲの割合（0〜1）
+                        upper_shadow_ratio = (high_today - body_top) / day_range     # 上ヒゲの割合（0〜1）
+                        body_ratio = (body_top - body_bottom) / day_range           # 実体の割合（0〜1）
+
+                        # --- MSB / OB 判定 ---
+                        msb_ob = detect_msb_ob(df_d, i)
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -232,7 +306,15 @@ if __name__ == "__main__":
                                 'rsi_14': float(rsi_14.iloc[i]),
                                 'volume_ratio': vr_today,
                                 'sma25_dev': float(sma25_dev.iloc[i]),
-                                'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None
+                                'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None,
+                                'is_bearish': is_bearish,
+                                'is_close_down': is_close_down,
+                                'lower_shadow_ratio': round(lower_shadow_ratio, 3),
+                                'upper_shadow_ratio': round(upper_shadow_ratio, 3),
+                                'body_ratio': round(body_ratio, 3),
+                                'msb_confirmed': msb_ob['msb_confirmed'],
+                                'in_ob_zone': msb_ob['in_ob_zone'],
+                                'bars_since_msb': msb_ob['bars_since_msb'],
                             }
                 else:
                     m_price = max(m_price, close)
@@ -282,7 +364,15 @@ if __name__ == "__main__":
                                 'volume_ratio': round(entry_meta.get('volume_ratio', 0), 2),
                                 'sma25_dev': round(entry_meta.get('sma25_dev', 0), 2),
                                 'nikkei_sma25_dev': round(entry_meta.get('nikkei_sma25_dev', 0), 2) if entry_meta.get(
-                                    'nikkei_sma25_dev') is not None else None
+                                    'nikkei_sma25_dev') is not None else None,
+                                'is_bearish': entry_meta.get('is_bearish', 0),
+                                'is_close_down': entry_meta.get('is_close_down', 0),
+                                'lower_shadow_ratio': entry_meta.get('lower_shadow_ratio', 0),
+                                'upper_shadow_ratio': entry_meta.get('upper_shadow_ratio', 0),
+                                'body_ratio': entry_meta.get('body_ratio', 0),
+                                'msb_confirmed': entry_meta.get('msb_confirmed', 0),
+                                'in_ob_zone': entry_meta.get('in_ob_zone', 0),
+                                'bars_since_msb': entry_meta.get('bars_since_msb'),
                             })
                         is_holding = False
         except Exception as e:
