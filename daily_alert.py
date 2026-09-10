@@ -19,8 +19,9 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 NIKKEI_DEV_THRESHOLD = 50.0  #元-5.0
-EXCLUDE_TUESDAY = False  #元True
+EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
+MAX_ALERT_COUNT = 20  # Discordに表示する候補数の上限（スコア上位から）
 
 # --- スコアリングモデル（ロジスティック回帰、4,534トレードで学習） ---
 # 数値特徴量は標準化してから係数を掛ける
@@ -48,6 +49,7 @@ def win_probability_score(rsi_14, volume_ratio, sma25_dev, sector):
     z += (sma25_dev - SCORE_FEATURE_MEAN['sma25_dev']) / SCORE_FEATURE_SCALE['sma25_dev'] * SCORE_COEF['sma25_dev']
     z += SECTOR_SCORE.get(sector, 0.0)
     return 1 / (1 + np.exp(-z))
+
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 NOTIFY_ON_EMPTY = True  # 該当銘柄が0件の日も通知するか
@@ -218,11 +220,14 @@ if __name__ == "__main__":
 
     if hits:
         hits.sort(key=lambda h: h['win_prob'], reverse=True)  # 勝率スコアが高い順に並べ替え
+        total_hits = len(hits)
+        display_hits = hits[:MAX_ALERT_COUNT]
         lines = [
             f"📈 **買いシグナル検出**（{latest_nk_date.date()}終値時点、翌営業日エントリー候補）",
-            f"日経25日線乖離: {latest_nk_dev:.2f}%　※勝率スコアが高い順に表示\n",
+            f"日経25日線乖離: {latest_nk_dev:.2f}%　※勝率スコア上位{len(display_hits)}件を表示"
+            + (f"（全{total_hits}件中）" if total_hits > MAX_ALERT_COUNT else "") + "\n",
         ]
-        for h in hits:
+        for h in display_hits:
             lines.append(
                 f"・`{h['ticker']}` {h['name']}（{h['sector']}） 推定勝率{h['win_prob']*100:.0f}%\n"
                 f"　終値{h['close']:.0f}円 / RSI{h['rsi_14']} / 出来高比{h['volume_ratio']} / 25日線乖離{h['sma25_dev']}%"
