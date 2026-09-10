@@ -24,7 +24,7 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
-USE_ENTRY_FILTERS = False     # Falseにすれば元の条件のみに戻せる
+USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
 NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
@@ -160,6 +160,16 @@ def detect_msb_ob(df_d, i, pivot_window=3, lookback=40):
     return {'msb_confirmed': 1, 'in_ob_zone': in_ob_zone, 'bars_since_msb': i - break_idx}
 
 
+def get_asof(series, dt):
+    """指定日時点で確定している直近の値を取得（未来の値は使わない、日付のズレにも対応）"""
+    if series is None or len(series) == 0:
+        return np.nan
+    pos = series.index.searchsorted(dt, side='right') - 1
+    if pos < 0:
+        return np.nan
+    return series.iloc[pos]
+
+
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -198,6 +208,25 @@ if __name__ == "__main__":
         df_nk.columns = df_nk.columns.get_level_values(0)
     nk_sma25 = df_nk['Close'].rolling(window=25).mean()
     df_nk['nk_sma25_dev'] = (df_nk['Close'] - nk_sma25) / nk_sma25 * 100
+
+    print("日経225先物データを取得中...")
+    try:
+        df_fut = yf.download("NIY=F", period="10y", interval="1d", progress=False, repair=True)
+        if isinstance(df_fut.columns, pd.MultiIndex):
+            df_fut.columns = df_fut.columns.get_level_values(0)
+        if df_fut.empty:
+            raise RuntimeError("先物データが空でした")
+        fut_sma25 = df_fut['Close'].rolling(window=25).mean()
+        df_fut['fut_sma25_dev'] = (df_fut['Close'] - fut_sma25) / fut_sma25 * 100
+        fut_dev_series = df_fut['fut_sma25_dev'].sort_index()
+        fut_close_series = df_fut['Close'].sort_index()
+        print(f"  取得成功: {len(df_fut)}件, 期間 {df_fut.index.min().date()} 〜 {df_fut.index.max().date()}")
+    except Exception as e:
+        print(f"  ⚠ 先物データの取得に失敗しました（先物関連の指標はNoneになります）: {e}")
+        fut_dev_series = None
+        fut_close_series = None
+
+    cash_close_series = df_nk['Close'].sort_index()
 
     print(f"検証開始...")
 
@@ -285,6 +314,15 @@ if __name__ == "__main__":
                         # --- MSB / OB 判定 ---
                         msb_ob = detect_msb_ob(df_d, i)
 
+                        # --- 日経225先物関連指標 ---
+                        fut_dev_at_entry = get_asof(fut_dev_series, entry_dt) if fut_dev_series is not None else np.nan
+                        fut_close_at_entry = get_asof(fut_close_series, entry_dt) if fut_close_series is not None else np.nan
+                        cash_close_at_entry = get_asof(cash_close_series, entry_dt)
+                        if pd.isna(fut_close_at_entry) or pd.isna(cash_close_at_entry) or cash_close_at_entry == 0:
+                            futures_basis = np.nan
+                        else:
+                            futures_basis = (fut_close_at_entry - cash_close_at_entry) / cash_close_at_entry * 100
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -315,6 +353,8 @@ if __name__ == "__main__":
                                 'msb_confirmed': msb_ob['msb_confirmed'],
                                 'in_ob_zone': msb_ob['in_ob_zone'],
                                 'bars_since_msb': msb_ob['bars_since_msb'],
+                                'futures_sma25_dev': float(fut_dev_at_entry) if not pd.isna(fut_dev_at_entry) else None,
+                                'futures_basis': float(futures_basis) if not pd.isna(futures_basis) else None,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -373,6 +413,8 @@ if __name__ == "__main__":
                                 'msb_confirmed': entry_meta.get('msb_confirmed', 0),
                                 'in_ob_zone': entry_meta.get('in_ob_zone', 0),
                                 'bars_since_msb': entry_meta.get('bars_since_msb'),
+                                'futures_sma25_dev': round(entry_meta['futures_sma25_dev'], 2) if entry_meta.get('futures_sma25_dev') is not None else None,
+                                'futures_basis': round(entry_meta['futures_basis'], 3) if entry_meta.get('futures_basis') is not None else None,
                             })
                         is_holding = False
         except Exception as e:
