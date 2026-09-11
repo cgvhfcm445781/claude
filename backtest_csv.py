@@ -25,9 +25,10 @@ OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
-NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
+NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
+FUTURES_BASIS_THRESHOLD = 0.0  # 先物ベーシス（先物-現物）がこれ以上ならエントリー見送り（マイナス＝先物が現物より弱気の時だけ採用）
 
 # --- 既知の暴落期間の除外リスト ---
 # 「日経-5%乖離で買う」は通常の調整局面では機能するが、コロナショックのような
@@ -168,6 +169,18 @@ def get_asof(series, dt):
     if pos < 0:
         return np.nan
     return series.iloc[pos]
+
+
+def get_asof_with_prev(series, dt):
+    """指定日時点の直近値と、その1つ前の値（前営業日相当）をまとめて取得"""
+    if series is None or len(series) == 0:
+        return np.nan, np.nan
+    pos = series.index.searchsorted(dt, side='right') - 1
+    if pos < 0:
+        return np.nan, np.nan
+    curr = series.iloc[pos]
+    prev = series.iloc[pos - 1] if pos - 1 >= 0 else np.nan
+    return curr, prev
 
 
 def calculate_rsi(series, period=14):
@@ -316,12 +329,17 @@ if __name__ == "__main__":
 
                         # --- 日経225先物関連指標 ---
                         fut_dev_at_entry = get_asof(fut_dev_series, entry_dt) if fut_dev_series is not None else np.nan
-                        fut_close_at_entry = get_asof(fut_close_series, entry_dt) if fut_close_series is not None else np.nan
+                        fut_close_at_entry, fut_close_prev = get_asof_with_prev(fut_close_series, entry_dt) if fut_close_series is not None else (np.nan, np.nan)
                         cash_close_at_entry = get_asof(cash_close_series, entry_dt)
                         if pd.isna(fut_close_at_entry) or pd.isna(cash_close_at_entry) or cash_close_at_entry == 0:
                             futures_basis = np.nan
                         else:
                             futures_basis = (fut_close_at_entry - cash_close_at_entry) / cash_close_at_entry * 100
+                        # 先物の「前日比」変化率（一晩でどれだけ動いたか）
+                        if pd.isna(fut_close_at_entry) or pd.isna(fut_close_prev) or fut_close_prev == 0:
+                            futures_overnight_chg = np.nan
+                        else:
+                            futures_overnight_chg = (fut_close_at_entry - fut_close_prev) / fut_close_prev * 100
 
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
@@ -333,6 +351,8 @@ if __name__ == "__main__":
                                 continue  # 出来高が薄すぎる銘柄は見送り
                             if is_crisis_period(entry_dt):
                                 continue  # 既知の暴落期間は見送り
+                            if pd.isna(futures_basis) or futures_basis >= FUTURES_BASIS_THRESHOLD:
+                                continue  # 先物ベーシスがプラス（先物が現物より強気）の日は見送り
 
                         if tomorrow_open * 100 <= INITIAL_CASH:
                             is_holding = True
@@ -355,6 +375,7 @@ if __name__ == "__main__":
                                 'bars_since_msb': msb_ob['bars_since_msb'],
                                 'futures_sma25_dev': float(fut_dev_at_entry) if not pd.isna(fut_dev_at_entry) else None,
                                 'futures_basis': float(futures_basis) if not pd.isna(futures_basis) else None,
+                                'futures_overnight_chg': float(futures_overnight_chg) if not pd.isna(futures_overnight_chg) else None,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -415,6 +436,7 @@ if __name__ == "__main__":
                                 'bars_since_msb': entry_meta.get('bars_since_msb'),
                                 'futures_sma25_dev': round(entry_meta['futures_sma25_dev'], 2) if entry_meta.get('futures_sma25_dev') is not None else None,
                                 'futures_basis': round(entry_meta['futures_basis'], 3) if entry_meta.get('futures_basis') is not None else None,
+                                'futures_overnight_chg': round(entry_meta['futures_overnight_chg'], 3) if entry_meta.get('futures_overnight_chg') is not None else None,
                             })
                         is_holding = False
         except Exception as e:
@@ -450,7 +472,8 @@ if __name__ == "__main__":
 
         print(f"\n=== ウォークフォワード検証（フィルタ適用: {USE_ENTRY_FILTERS}） ===")
         print(f"条件: 日経25日線乖離 <= {NIKKEI_DEV_THRESHOLD}%, "
-              f"火曜除外={EXCLUDE_TUESDAY}, 出来高比率 >= {MIN_VOLUME_RATIO}")
+              f"火曜除外={EXCLUDE_TUESDAY}, 出来高比率 >= {MIN_VOLUME_RATIO}, "
+              f"先物ベーシス < {FUTURES_BASIS_THRESHOLD}")
         _summary(train, f"学習期間（〜{WALKFORWARD_SPLIT_YEAR - 1}年）")
         _summary(test, f"検証期間（{WALKFORWARD_SPLIT_YEAR}年〜、未知データ）")
         print("学習期間と検証期間で勝率・平均損益が大きく変わらなければ、条件が過去データへの")
