@@ -115,8 +115,10 @@ def detect_msb_ob(df_d, i, pivot_window=3, lookback=40):
            その後の値動きが直近スイングハイを上抜けたら「構造の転換」とみなす
     - OB：MSBを起こした上昇の起点から遡って最後の陰線を「注文が溜まっていたゾーン」とみなす
     - in_ob_zone：当日の値幅がそのOBのレンジと重なっていれば「押し目でOBに戻ってきた」と判定
+    - ob_low / ob_high：OBゾーンの範囲そのもの（呼び出し側で「前日の値幅が触れたか」等を判定する用）
     未来の情報は使わず、日 i 時点で確定済みの情報のみで判定する（先読みなし）。
     """
+    empty = {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None, 'ob_low': None, 'ob_high': None}
     highs = df_d['High'].values
     lows = df_d['Low'].values
     opens = df_d['Open'].values
@@ -125,16 +127,16 @@ def detect_msb_ob(df_d, i, pivot_window=3, lookback=40):
     start = max(pivot_window, i - lookback)
     end = i - 1 - pivot_window  # 日 i-1 時点で確定しているスイングハイの最終候補
     if end <= start:
-        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}
+        return empty
 
     swing_highs = [k for k in range(start, end + 1)
                    if highs[k] == highs[k - pivot_window:k + pivot_window + 1].max()]
     if len(swing_highs) < 2:
-        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}
+        return empty
 
     sh_prior, sh_recent = swing_highs[-2], swing_highs[-1]
     if highs[sh_recent] >= highs[sh_prior]:
-        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}  # 高値切り上げ＝下降構造でない
+        return empty  # 高値切り上げ＝下降構造でない
 
     # 直近スイングハイを上抜けたポイントを探す（先読みなし：sh_recent より後、i まで）
     break_idx = None
@@ -143,7 +145,7 @@ def detect_msb_ob(df_d, i, pivot_window=3, lookback=40):
             break_idx = j
             break
     if break_idx is None:
-        return {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None}
+        return empty
 
     # 上抜けを起こした上昇の起点から遡り、最後の陰線をOB候補とする
     ob_idx = None
@@ -153,12 +155,14 @@ def detect_msb_ob(df_d, i, pivot_window=3, lookback=40):
             break
 
     in_ob_zone = 0
+    ob_low = ob_high = None
     if ob_idx is not None:
-        ob_low, ob_high = lows[ob_idx], highs[ob_idx]
+        ob_low, ob_high = float(lows[ob_idx]), float(highs[ob_idx])
         if lows[i] <= ob_high and highs[i] >= ob_low:
             in_ob_zone = 1
 
-    return {'msb_confirmed': 1, 'in_ob_zone': in_ob_zone, 'bars_since_msb': i - break_idx}
+    return {'msb_confirmed': 1, 'in_ob_zone': in_ob_zone, 'bars_since_msb': i - break_idx,
+            'ob_low': ob_low, 'ob_high': ob_high}
 
 
 def get_asof(series, dt):
@@ -301,7 +305,7 @@ if __name__ == "__main__":
                     touch_oversold = (d_1 <= OVERSOLD_LEVEL) or (sd_1 <= OVERSOLD_LEVEL) or (d_0 <= OVERSOLD_LEVEL)
                     golden_cross = (d_1 <= sd_1) and (d_0 > sd_0)
 
-                    if touch_oversold and golden_cross:
+                    if golden_cross:  # 「売られすぎ」条件はゲートから外し、記録用フラグとして残す（後から両方検証できるように）
                         entry_dt = df_d.index[i]
                         nk_dev = df_nk.loc[entry_dt, 'nk_sma25_dev'] if entry_dt in df_nk.index else np.nan
                         vr_today = float(vol_ratio.iloc[i])
@@ -326,6 +330,14 @@ if __name__ == "__main__":
 
                         # --- MSB / OB 判定 ---
                         msb_ob = detect_msb_ob(df_d, i)
+
+                        # --- 前日の値幅がOBゾーンに触れていたか ---
+                        ob_touched_prev_day = 0
+                        if msb_ob['ob_low'] is not None and i - 1 >= 0:
+                            prev_low = float(df_d['Low'].iloc[i - 1])
+                            prev_high = float(df_d['High'].iloc[i - 1])
+                            if prev_low <= msb_ob['ob_high'] and prev_high >= msb_ob['ob_low']:
+                                ob_touched_prev_day = 1
 
                         # --- 日経225先物関連指標 ---
                         fut_dev_at_entry = get_asof(fut_dev_series, entry_dt) if fut_dev_series is not None else np.nan
@@ -373,6 +385,8 @@ if __name__ == "__main__":
                                 'msb_confirmed': msb_ob['msb_confirmed'],
                                 'in_ob_zone': msb_ob['in_ob_zone'],
                                 'bars_since_msb': msb_ob['bars_since_msb'],
+                                'ob_touched_prev_day': ob_touched_prev_day,
+                                'touch_oversold': 1 if touch_oversold else 0,
                                 'futures_sma25_dev': float(fut_dev_at_entry) if not pd.isna(fut_dev_at_entry) else None,
                                 'futures_basis': float(futures_basis) if not pd.isna(futures_basis) else None,
                                 'futures_overnight_chg': float(futures_overnight_chg) if not pd.isna(futures_overnight_chg) else None,
@@ -434,6 +448,8 @@ if __name__ == "__main__":
                                 'msb_confirmed': entry_meta.get('msb_confirmed', 0),
                                 'in_ob_zone': entry_meta.get('in_ob_zone', 0),
                                 'bars_since_msb': entry_meta.get('bars_since_msb'),
+                                'ob_touched_prev_day': entry_meta.get('ob_touched_prev_day', 0),
+                                'touch_oversold': entry_meta.get('touch_oversold', 0),
                                 'futures_sma25_dev': round(entry_meta['futures_sma25_dev'], 2) if entry_meta.get('futures_sma25_dev') is not None else None,
                                 'futures_basis': round(entry_meta['futures_basis'], 3) if entry_meta.get('futures_basis') is not None else None,
                                 'futures_overnight_chg': round(entry_meta['futures_overnight_chg'], 3) if entry_meta.get('futures_overnight_chg') is not None else None,
