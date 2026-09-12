@@ -25,7 +25,7 @@ OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
-NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
+NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 0.0  # 先物ベーシス（先物-現物）がこれ以上ならエントリー見送り（マイナス＝先物が現物より弱気の時だけ採用）
