@@ -25,7 +25,7 @@ OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
-NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
+NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 0.0  # 先物ベーシス（先物-現物）がこれ以上ならエントリー見送り（マイナス＝先物が現物より弱気の時だけ採用）
@@ -423,6 +423,18 @@ if __name__ == "__main__":
                         else:
                             futures_overnight_chg = (fut_close_at_entry - fut_close_prev) / fut_close_prev * 100
 
+                        # --- 現物(日経)が、夜間先物の示唆した動きに対してどれだけ乖離したか ---
+                        cash_close_at_entry_v2, cash_close_prev = get_asof_with_prev(cash_close_series, entry_dt)
+                        if pd.isna(cash_close_at_entry_v2) or pd.isna(cash_close_prev) or cash_close_prev == 0:
+                            cash_chg_today = np.nan
+                        else:
+                            cash_chg_today = (cash_close_at_entry_v2 - cash_close_prev) / cash_close_prev * 100
+                        if pd.isna(cash_chg_today) or pd.isna(futures_overnight_chg):
+                            overnight_gap = np.nan
+                        else:
+                            # マイナスに大きい＝現物が先物の示唆以上に下げすぎている（理論上は「買い」のサイン）
+                            overnight_gap = cash_chg_today - futures_overnight_chg
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -461,6 +473,8 @@ if __name__ == "__main__":
                                 'futures_sma25_dev': float(fut_dev_at_entry) if not pd.isna(fut_dev_at_entry) else None,
                                 'futures_basis': float(futures_basis) if not pd.isna(futures_basis) else None,
                                 'futures_overnight_chg': float(futures_overnight_chg) if not pd.isna(futures_overnight_chg) else None,
+                                'cash_chg_today': float(cash_chg_today) if not pd.isna(cash_chg_today) else None,
+                                'overnight_gap': float(overnight_gap) if not pd.isna(overnight_gap) else None,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -525,6 +539,8 @@ if __name__ == "__main__":
                                 'futures_sma25_dev': round(entry_meta['futures_sma25_dev'], 2) if entry_meta.get('futures_sma25_dev') is not None else None,
                                 'futures_basis': round(entry_meta['futures_basis'], 3) if entry_meta.get('futures_basis') is not None else None,
                                 'futures_overnight_chg': round(entry_meta['futures_overnight_chg'], 3) if entry_meta.get('futures_overnight_chg') is not None else None,
+                                'cash_chg_today': round(entry_meta['cash_chg_today'], 3) if entry_meta.get('cash_chg_today') is not None else None,
+                                'overnight_gap': round(entry_meta['overnight_gap'], 3) if entry_meta.get('overnight_gap') is not None else None,
                             })
                         is_holding = False
         except Exception as e:
