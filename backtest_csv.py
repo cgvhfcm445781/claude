@@ -25,7 +25,7 @@ OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
-NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
+NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 0.0  # 先物ベーシス（先物-現物）がこれ以上ならエントリー見送り（マイナス＝先物が現物より弱気の時だけ採用）
@@ -107,62 +107,129 @@ def is_crisis_period(dt):
     return False
 
 
-def detect_msb_ob(df_d, i, pivot_window=3, lookback=40):
+def compute_msb_ob_series(df_d, zigzag_len=9, fib_factor=0.33):
     """
-    簡易版 MSB（Market Structure Break）/ OB（Order Block）判定。
-    - スイングハイ：前後 pivot_window 本より高値が高い足（確定には pivot_window 本の経過が必要）
-    - MSB：直近のスイングハイが1つ前のスイングハイより低い（下降構造＝安値・高値切り下げ）状態から、
-           その後の値動きが直近スイングハイを上抜けたら「構造の転換」とみなす
-    - OB：MSBを起こした上昇の起点から遡って最後の陰線を「注文が溜まっていたゾーン」とみなす
-    - in_ob_zone：当日の値幅がそのOBのレンジと重なっていれば「押し目でOBに戻ってきた」と判定
-    - ob_low / ob_high：OBゾーンの範囲そのもの（呼び出し側で「前日の値幅が触れたか」等を判定する用）
-    未来の情報は使わず、日 i 時点で確定済みの情報のみで判定する（先読みなし）。
+    TradingViewインジケータ「Market Structure Break & Order Block」（EmreKb氏, MPL-2.0）の
+    ロジックをできるだけ忠実にPythonへ移植したもの。このバックテストはロングのみのため、
+    強気側（Bullish MSB / Bullish OB）だけを扱う。df_d全体に対して1回だけ計算し、
+    日ごとの系列（pandas Series）として返す。
+
+    - to_up/to_down：直近 zigzag_len 本（当日含む）の高値・安値を更新したか（未来は見ない）
+    - trend：to_up/to_downの切り替わりで反転するZigZagの状態
+    - h1,h0 / l1,l0：直近2つのスイングハイ／スイングロー
+    - market：h0がh1を「fib_factor分のマージンを付けて」上抜けたら強気(1)に転換 → これがMSB
+    - OB：MSBを起こした「安値側のレグ」(h1〜l0の間)の中で、最後の陰線をOB候補とする
+    - OBゾーンは、終値がゾーン下限を割るまで有効とみなす（インジケータのbox無効化条件と同じ）
     """
-    empty = {'msb_confirmed': 0, 'in_ob_zone': 0, 'bars_since_msb': None, 'ob_low': None, 'ob_high': None}
-    highs = df_d['High'].values
-    lows = df_d['Low'].values
-    opens = df_d['Open'].values
-    closes = df_d['Close'].values
+    n = len(df_d)
+    high = df_d['High'].to_numpy(dtype=float)
+    low = df_d['Low'].to_numpy(dtype=float)
+    open_ = df_d['Open'].to_numpy(dtype=float)
+    close = df_d['Close'].to_numpy(dtype=float)
 
-    start = max(pivot_window, i - lookback)
-    end = i - 1 - pivot_window  # 日 i-1 時点で確定しているスイングハイの最終候補
-    if end <= start:
-        return empty
+    # 直近zigzag_len本（当日含む）の高値・安値更新判定はrollingで一括計算
+    high_s = pd.Series(high)
+    low_s = pd.Series(low)
+    to_up = (high_s >= high_s.rolling(zigzag_len, min_periods=1).max()).to_numpy()
+    to_down = (low_s <= low_s.rolling(zigzag_len, min_periods=1).min()).to_numpy()
 
-    swing_highs = [k for k in range(start, end + 1)
-                   if highs[k] == highs[k - pivot_window:k + pivot_window + 1].max()]
-    if len(swing_highs) < 2:
-        return empty
+    trend = 1
+    last_to_up_idx = -1
+    last_to_down_idx = -1
+    high_pivots, low_pivots = [], []
+    h0 = h1 = l0 = l1 = None
+    h0i = h1i = l0i = None
+    last_h0_for_market = last_l0_for_market = None
+    market = 1
+    active_ob_low = active_ob_high = None
+    last_msb_bar = None
 
-    sh_prior, sh_recent = swing_highs[-2], swing_highs[-1]
-    if highs[sh_recent] >= highs[sh_prior]:
-        return empty  # 高値切り上げ＝下降構造でない
+    msb_confirmed = np.zeros(n, dtype=int)
+    in_ob_zone = np.zeros(n, dtype=int)
+    ob_low_arr = np.full(n, np.nan)
+    ob_high_arr = np.full(n, np.nan)
+    bars_since_msb = np.full(n, np.nan)
 
-    # 直近スイングハイを上抜けたポイントを探す（先読みなし：sh_recent より後、i まで）
-    break_idx = None
-    for j in range(sh_recent + 1, i + 1):
-        if highs[j] > highs[sh_recent]:
-            break_idx = j
-            break
-    if break_idx is None:
-        return empty
+    for i in range(n):
+        prev_trend = trend
+        if trend == 1 and to_down[i]:
+            trend = -1
+        elif trend == -1 and to_up[i]:
+            trend = 1
 
-    # 上抜けを起こした上昇の起点から遡り、最後の陰線をOB候補とする
-    ob_idx = None
-    for j in range(break_idx - 1, sh_recent - 1, -1):
-        if closes[j] < opens[j]:
-            ob_idx = j
-            break
+        if to_up[i]:
+            last_to_up_idx = i
+        if to_down[i]:
+            last_to_down_idx = i
 
-    in_ob_zone = 0
-    ob_low = ob_high = None
-    if ob_idx is not None:
-        ob_low, ob_high = float(lows[ob_idx]), float(highs[ob_idx])
-        if lows[i] <= ob_high and highs[i] >= ob_low:
-            in_ob_zone = 1
+        if trend != prev_trend:
+            if trend == 1:
+                start = last_to_up_idx if last_to_up_idx >= 0 else 0
+                seg = low[start:i + 1]
+                low_val = seg.min()
+                low_idx = start + int(seg.argmin())
+                low_pivots.append((low_val, low_idx))
+                if len(low_pivots) >= 2:
+                    l1, l0 = low_pivots[-2][0], low_pivots[-1][0]
+                else:
+                    l0 = low_pivots[-1][0]
+                l0i = low_pivots[-1][1]
+            else:
+                start = last_to_down_idx if last_to_down_idx >= 0 else 0
+                seg = high[start:i + 1]
+                high_val = seg.max()
+                high_idx = start + int(seg.argmax())
+                high_pivots.append((high_val, high_idx))
+                if len(high_pivots) >= 2:
+                    h1, h0 = high_pivots[-2][0], high_pivots[-1][0]
+                    h1i = high_pivots[-2][1]
+                else:
+                    h0 = high_pivots[-1][0]
+                h0i = high_pivots[-1][1]
 
-    return {'msb_confirmed': 1, 'in_ob_zone': in_ob_zone, 'bars_since_msb': i - break_idx,
-            'ob_low': ob_low, 'ob_high': ob_high}
+        if None not in (h0, h1, l0, l1):
+            if last_h0_for_market != h0 and last_l0_for_market != l0:
+                if market == -1 and h0 > h1 and h0 > h1 + abs(h1 - l0) * fib_factor:
+                    market = 1
+                    last_h0_for_market, last_l0_for_market = h0, l0
+                    msb_confirmed[i] = 1
+                    last_msb_bar = i
+                    # OB候補：h1i 〜 l0i（安値側のレグ）の中で最後の陰線
+                    ob_idx = None
+                    if h1i is not None and l0i is not None and h1i <= l0i:
+                        for j in range(h1i, l0i + 1):
+                            if close[j] < open_[j]:
+                                ob_idx = j
+                    if ob_idx is not None:
+                        active_ob_low = float(low[ob_idx])
+                        active_ob_high = float(high[ob_idx])
+                    else:
+                        active_ob_low = active_ob_high = None
+                elif market == 1 and l0 < l1 and l0 < l1 - abs(h0 - l1) * fib_factor:
+                    market = -1
+                    last_h0_for_market, last_l0_for_market = h0, l0
+
+        # OBゾーンの無効化判定（終値がゾーン下限を割ったら消滅、インジケータと同じ挙動）
+        if active_ob_low is not None and close[i] < active_ob_low:
+            active_ob_low = active_ob_high = None
+
+        if active_ob_low is not None:
+            ob_low_arr[i] = active_ob_low
+            ob_high_arr[i] = active_ob_high
+            if low[i] <= active_ob_high and high[i] >= active_ob_low:
+                in_ob_zone[i] = 1
+
+        if last_msb_bar is not None:
+            bars_since_msb[i] = i - last_msb_bar
+
+    idx = df_d.index
+    return {
+        'msb_confirmed': pd.Series(msb_confirmed, index=idx),
+        'in_ob_zone': pd.Series(in_ob_zone, index=idx),
+        'ob_low': pd.Series(ob_low_arr, index=idx),
+        'ob_high': pd.Series(ob_high_arr, index=idx),
+        'bars_since_msb': pd.Series(bars_since_msb, index=idx),
+    }
 
 
 def get_asof(series, dt):
@@ -281,6 +348,7 @@ if __name__ == "__main__":
             vol_ratio = df_d['Volume'] / (vol_ma20 + 1e-10)
             sma25 = df_d['Close'].rolling(window=25).mean()
             sma25_dev = (df_d['Close'] - sma25) / sma25 * 100
+            msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
 
             is_holding = False
             e_price, m_price, e_date = 0, 0, None
@@ -328,16 +396,14 @@ if __name__ == "__main__":
                         upper_shadow_ratio = (high_today - body_top) / day_range     # 上ヒゲの割合（0〜1）
                         body_ratio = (body_top - body_bottom) / day_range           # 実体の割合（0〜1）
 
-                        # --- MSB / OB 判定 ---
-                        msb_ob = detect_msb_ob(df_d, i)
-
-                        # --- 前日の値幅がOBゾーンに触れていたか ---
-                        ob_touched_prev_day = 0
-                        if msb_ob['ob_low'] is not None and i - 1 >= 0:
-                            prev_low = float(df_d['Low'].iloc[i - 1])
-                            prev_high = float(df_d['High'].iloc[i - 1])
-                            if prev_low <= msb_ob['ob_high'] and prev_high >= msb_ob['ob_low']:
-                                ob_touched_prev_day = 1
+                        # --- MSB / OB 判定（銘柄ごとに事前計算済みの系列を参照） ---
+                        msb_ob = {
+                            'msb_confirmed': int(msb_series['msb_confirmed'].iloc[i]),
+                            'in_ob_zone': int(msb_series['in_ob_zone'].iloc[i]),
+                            'bars_since_msb': msb_series['bars_since_msb'].iloc[i],
+                        }
+                        # --- 前日の値幅がOBゾーンに触れていたか（前日時点で有効だったゾーンで判定） ---
+                        ob_touched_prev_day = int(msb_series['in_ob_zone'].iloc[i - 1]) if i - 1 >= 0 else 0
 
                         # --- 日経225先物関連指標 ---
                         fut_dev_at_entry = get_asof(fut_dev_series, entry_dt) if fut_dev_series is not None else np.nan
