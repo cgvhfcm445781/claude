@@ -25,7 +25,7 @@ OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
-NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
+NIKKEI_DEV_THRESHOLD = -5.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 0.0  # 先物ベーシス（先物-現物）がこれ以上ならエントリー見送り（マイナス＝先物が現物より弱気の時だけ採用）
@@ -404,6 +404,10 @@ if __name__ == "__main__":
                         }
                         # --- 前日の値幅がOBゾーンに触れていたか（前日時点で有効だったゾーンで判定） ---
                         ob_touched_prev_day = int(msb_series['in_ob_zone'].iloc[i - 1]) if i - 1 >= 0 else 0
+                        # 直近3日（GC前日・前々日・3日前）のいずれかで帯（OBゾーン）に触れていたか
+                        ob_touched_recent3 = 1 if any(
+                            msb_series['in_ob_zone'].iloc[i - k] for k in (1, 2, 3) if i - k >= 0
+                        ) else 0
 
                         # --- 日経225先物関連指標 ---
                         fut_dev_at_entry = get_asof(fut_dev_series, entry_dt) if fut_dev_series is not None else np.nan
@@ -452,6 +456,7 @@ if __name__ == "__main__":
                                 'in_ob_zone': msb_ob['in_ob_zone'],
                                 'bars_since_msb': msb_ob['bars_since_msb'],
                                 'ob_touched_prev_day': ob_touched_prev_day,
+                                'ob_touched_recent3': ob_touched_recent3,
                                 'touch_oversold': 1 if touch_oversold else 0,
                                 'futures_sma25_dev': float(fut_dev_at_entry) if not pd.isna(fut_dev_at_entry) else None,
                                 'futures_basis': float(futures_basis) if not pd.isna(futures_basis) else None,
@@ -515,6 +520,7 @@ if __name__ == "__main__":
                                 'in_ob_zone': entry_meta.get('in_ob_zone', 0),
                                 'bars_since_msb': entry_meta.get('bars_since_msb'),
                                 'ob_touched_prev_day': entry_meta.get('ob_touched_prev_day', 0),
+                                'ob_touched_recent3': entry_meta.get('ob_touched_recent3', 0),
                                 'touch_oversold': entry_meta.get('touch_oversold', 0),
                                 'futures_sma25_dev': round(entry_meta['futures_sma25_dev'], 2) if entry_meta.get('futures_sma25_dev') is not None else None,
                                 'futures_basis': round(entry_meta['futures_basis'], 3) if entry_meta.get('futures_basis') is not None else None,
