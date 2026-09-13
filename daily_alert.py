@@ -18,26 +18,39 @@ STOCH_D_PERIOD = 3
 STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
-NIKKEI_DEV_THRESHOLD = 50.0  #元-5.0
+NIKKEI_DEV_THRESHOLD = 50.0  # 頻度を優先し実質無効化（backtest_csv.pyと同じ方針）
 EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
+US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り
 MAX_ALERT_COUNT = 20  # Discordに表示する候補数の上限（スコア上位から）
 
-# --- スコアリングモデル（ロジスティック回帰、4,534トレードで学習） ---
+# --- 日本の33業種区分 → 米国セクターETF（SPDR Select Sector）の近似対応表 ---
+SECTOR_ETF_MAP = {
+    '水産・農林業': 'XLP', '鉱業': 'XLE', '建設業': 'XLI', '食料品': 'XLP',
+    '繊維製品': 'XLY', 'パルプ・紙': 'XLB', '化学': 'XLB', '医薬品': 'XLV',
+    '石油・石炭製品': 'XLE', 'ゴム製品': 'XLY', 'ガラス・土石製品': 'XLB',
+    '鉄鋼': 'XLB', '非鉄金属': 'XLB', '金属製品': 'XLB', '機械': 'XLI',
+    '電気機器': 'XLK', '輸送用機器': 'XLY', '精密機器': 'XLK', 'その他製品': 'XLY',
+    '電気・ガス業': 'XLU', '陸運業': 'XLI', '海運業': 'XLI', '空運業': 'XLI',
+    '倉庫・運輸関連業': 'XLI', '情報・通信業': 'XLC', '卸売業': 'XLI',
+    '小売業': 'XLY', '銀行業': 'XLF', '証券、商品先物取引業': 'XLF',
+    '保険業': 'XLF', 'その他金融業': 'XLF', '不動産業': 'XLRE', 'サービス業': 'XLY',
+}
+
+# --- スコアリングモデル（ロジスティック回帰、7,227トレードで学習・2026年9月版） ---
 # 数値特徴量は標準化してから係数を掛ける
-SCORE_FEATURE_MEAN = {'rsi_14': 29.917, 'volume_ratio': 1.309, 'sma25_dev': -8.527}
-SCORE_FEATURE_SCALE = {'rsi_14': 10.038, 'volume_ratio': 0.612, 'sma25_dev': 5.431}
-SCORE_COEF = {'rsi_14': 0.3888, 'volume_ratio': -0.0139, 'sma25_dev': -0.5889}
-SCORE_INTERCEPT = 0.7385
+SCORE_FEATURE_MEAN = {'rsi_14': 36.569, 'volume_ratio': 1.154, 'sma25_dev': -4.767}
+SCORE_FEATURE_SCALE = {'rsi_14': 12.168, 'volume_ratio': 0.619, 'sma25_dev': 5.018}
+SCORE_COEF = {'rsi_14': 0.1928, 'volume_ratio': 0.1244, 'sma25_dev': -0.2837}
+SCORE_INTERCEPT = 0.1940
 # 業種ボーナス（採用件数が少ない業種は 0 = 「その他」扱い）
 SECTOR_SCORE = {
-    '不動産業': 0.4547, '建設業': 0.5451, '銀行業': 0.5417, 'その他金融業': 0.2995,
-    '食料品': 0.3266, '医薬品': 0.2389, '非鉄金属': 0.2156, 'その他製品': 0.1830,
-    '輸送用機器': 0.1002, '陸運業': 0.0591, '卸売業': 0.0285, '化学': 0.0164,
-    '繊維製品': -0.0118, '情報・通信業': -0.0146, 'ゴム製品': 0.0242,
-    '金属製品': -0.1131, '鉄鋼': -0.1100, 'ガラス・土石製品': -0.1807,
-    'サービス業': -0.1693, '機械': -0.1923, '電気機器': -0.2078,
-    '小売業': -0.2376, '電気・ガス業': -0.3017, '精密機器': -0.4338,
+    '不動産業': 0.5022, '銀行業': 0.2851, '卸売業': 0.2231, 'ゴム製品': 0.3287,
+    'ガラス・土石製品': 0.1999, '非鉄金属': 0.1869, '建設業': 0.1160, '電気機器': 0.1323,
+    '化学': 0.0632, '機械': 0.0311, '繊維製品': 0.0143, '鉄鋼': -0.0224,
+    '医薬品': -0.0198, 'その他製品': -0.0322, '輸送用機器': -0.0822, '小売業': -0.0844,
+    'その他金融業': -0.0844, '金属製品': -0.0931, '食料品': -0.1184, '陸運業': -0.2020,
+    'サービス業': -0.2369, '精密機器': -0.3553, '情報・通信業': -0.4581, '電気・ガス業': -0.7942,
 }
 
 
@@ -99,6 +112,16 @@ def next_trading_day_weekday(today):
     return nxt.weekday()
 
 
+def get_asof(series, dt):
+    """指定日時点で確定している直近の値を取得（未来の値は使わない、日付のズレにも対応）"""
+    if series is None or len(series) == 0:
+        return np.nan
+    pos = series.index.searchsorted(dt, side='right') - 1
+    if pos < 0:
+        return np.nan
+    return series.iloc[pos]
+
+
 def send_discord_message(content):
     if not DISCORD_WEBHOOK_URL:
         print("⚠ DISCORD_WEBHOOK_URL が設定されていません。通知をスキップします。")
@@ -133,7 +156,7 @@ if __name__ == "__main__":
     weekday_names = ["月曜", "火曜", "水曜", "木曜", "金曜", "土曜", "日曜"]
     print(f"翌営業日の曜日（推定）: {weekday_names[next_wd]}")
 
-    # --- 地合いフィルタ：日経条件を満たさなければ、個別銘柄を調べるまでもなく終了 ---
+    # --- 地合いフィルタ：日経条件（現在は実質無効）と曜日条件だけ、個別銘柄を調べる前にチェック ---
     skip_reason = None
     if pd.isna(latest_nk_dev) or latest_nk_dev > NIKKEI_DEV_THRESHOLD:
         skip_reason = f"日経25日線乖離が条件({NIKKEI_DEV_THRESHOLD}%以下)を満たしていません（現在{latest_nk_dev:.2f}%）"
@@ -146,6 +169,22 @@ if __name__ == "__main__":
             send_discord_message(f"📊 本日({latest_nk_date.date()})の株スクリーニング結果\n\n{skip_reason}\n該当銘柄なし。")
         print(f"総実行時間: {time.time() - start_time:.1f}秒")
         raise SystemExit(0)
+
+    print("米国セクターETFデータを取得中...")
+    us_sector_chg_series = {}
+    for etf in sorted(set(SECTOR_ETF_MAP.values())):
+        try:
+            df_etf = yf.download(etf, period="3mo", interval="1d", progress=False, repair=True)
+            if isinstance(df_etf.columns, pd.MultiIndex):
+                df_etf.columns = df_etf.columns.get_level_values(0)
+            if df_etf.empty:
+                raise RuntimeError("空データ")
+            chg = df_etf['Close'].pct_change() * 100
+            us_sector_chg_series[etf] = chg.sort_index()
+        except Exception as e:
+            print(f"  ⚠ {etf} の取得に失敗（この業種は米国セクター条件を満たせずスキップされます）: {e}")
+            us_sector_chg_series[etf] = None
+    print(f"  取得完了: {sum(1 for v in us_sector_chg_series.values() if v is not None)}/{len(us_sector_chg_series)}銘柄")
 
     print("地合い条件クリア。個別銘柄をスクリーニング中...")
     stock_list = get_jpx_stock_list()
@@ -196,6 +235,13 @@ if __name__ == "__main__":
             if vr_today < MIN_VOLUME_RATIO:
                 continue
 
+            # --- 米国同業種セクターETFの前日変化率をチェック ---
+            us_etf = SECTOR_ETF_MAP.get(sector)
+            us_series = us_sector_chg_series.get(us_etf) if us_etf else None
+            us_sector_chg = get_asof(us_series, df_d.index[-1]) if us_series is not None else np.nan
+            if pd.isna(us_sector_chg) or us_sector_chg > US_SECTOR_CHG_THRESHOLD:
+                continue
+
             rsi_today = float(rsi_14.iloc[-1])
             sma_dev_today = float(sma25_dev.iloc[-1])
             win_prob = win_probability_score(rsi_today, vr_today, sma_dev_today, sector)
@@ -208,6 +254,7 @@ if __name__ == "__main__":
                 'rsi_14': round(rsi_today, 1),
                 'volume_ratio': round(vr_today, 2),
                 'sma25_dev': round(sma_dev_today, 2),
+                'us_sector_chg': round(float(us_sector_chg), 2),
                 'win_prob': win_prob,
             })
         except Exception:
@@ -224,13 +271,14 @@ if __name__ == "__main__":
         display_hits = hits[:MAX_ALERT_COUNT]
         lines = [
             f"📈 **買いシグナル検出**（{latest_nk_date.date()}終値時点、翌営業日エントリー候補）",
-            f"日経25日線乖離: {latest_nk_dev:.2f}%　※勝率スコア上位{len(display_hits)}件を表示"
+            f"※米国同業種ETF前日比<={US_SECTOR_CHG_THRESHOLD}%を満たす銘柄のみ、勝率スコア上位{len(display_hits)}件を表示"
             + (f"（全{total_hits}件中）" if total_hits > MAX_ALERT_COUNT else "") + "\n",
         ]
         for h in display_hits:
             lines.append(
                 f"・`{h['ticker']}` {h['name']}（{h['sector']}） 推定勝率{h['win_prob']*100:.0f}%\n"
-                f"　終値{h['close']:.0f}円 / RSI{h['rsi_14']} / 出来高比{h['volume_ratio']} / 25日線乖離{h['sma25_dev']}%"
+                f"　終値{h['close']:.0f}円 / RSI{h['rsi_14']} / 出来高比{h['volume_ratio']} / "
+                f"25日線乖離{h['sma25_dev']}% / 米国セクター前日比{h['us_sector_chg']}%"
             )
         message = "\n".join(lines)
         print(message)
