@@ -25,10 +25,10 @@ OVERSOLD_LEVEL = 20
 
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
-NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー
+NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー（頻度を優先し実質無効化）
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
-FUTURES_BASIS_THRESHOLD = 100.0  # 先物ベーシス（先物-現物）がこれ以上ならエントリー見送り（マイナス＝先物が現物より弱気の時だけ採用）※検証のため一時的に実質無効化中
+FUTURES_BASIS_THRESHOLD = 100.0  # 先物ベーシス条件（勝率への寄与が小さく、頻度を優先するため実質無効化）
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（大きく下げていた銘柄だけ採用）
 
 # --- 既知の暴落期間の除外リスト ---
@@ -407,7 +407,7 @@ if __name__ == "__main__":
                     touch_oversold = (d_1 <= OVERSOLD_LEVEL) or (sd_1 <= OVERSOLD_LEVEL) or (d_0 <= OVERSOLD_LEVEL)
                     golden_cross = (d_1 <= sd_1) and (d_0 > sd_0)
 
-                    if golden_cross:  # 「売られすぎ」条件はゲートから外し、記録用フラグとして残す（後から両方検証できるように）
+                    if touch_oversold and golden_cross:  # 検証の結果、売られすぎ条件は有効なため正式にゲートへ戻す
                         entry_dt = df_d.index[i]
                         nk_dev = df_nk.loc[entry_dt, 'nk_sma25_dev'] if entry_dt in df_nk.index else np.nan
                         vr_today = float(vol_ratio.iloc[i])
