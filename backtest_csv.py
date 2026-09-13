@@ -29,6 +29,7 @@ NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に�
 EXCLUDE_TUESDAY = True       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 0.0  # 先物ベーシス（先物-現物）がこれ以上ならエントリー見送り（マイナス＝先物が現物より弱気の時だけ採用）
+US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（大きく下げていた銘柄だけ採用）
 
 # --- 既知の暴落期間の除外リスト ---
 # 「日経-5%乖離で買う」は通常の調整局面では機能するが、コロナショックのような
@@ -487,6 +488,8 @@ if __name__ == "__main__":
                                 continue  # 既知の暴落期間は見送り
                             if pd.isna(futures_basis) or futures_basis >= FUTURES_BASIS_THRESHOLD:
                                 continue  # 先物ベーシスがプラス（先物が現物より強気）の日は見送り
+                            if pd.isna(us_sector_chg) or us_sector_chg > US_SECTOR_CHG_THRESHOLD:
+                                continue  # 米国同業種セクターがあまり下げていない銘柄は見送り
 
                         if tomorrow_open * 100 <= INITIAL_CASH:
                             is_holding = True
@@ -623,7 +626,7 @@ if __name__ == "__main__":
         print(f"\n=== ウォークフォワード検証（フィルタ適用: {USE_ENTRY_FILTERS}） ===")
         print(f"条件: 日経25日線乖離 <= {NIKKEI_DEV_THRESHOLD}%, "
               f"火曜除外={EXCLUDE_TUESDAY}, 出来高比率 >= {MIN_VOLUME_RATIO}, "
-              f"先物ベーシス < {FUTURES_BASIS_THRESHOLD}")
+              f"先物ベーシス < {FUTURES_BASIS_THRESHOLD}, 米国同業種ETF前日比 <= {US_SECTOR_CHG_THRESHOLD}%")
         _summary(train, f"学習期間（〜{WALKFORWARD_SPLIT_YEAR - 1}年）")
         _summary(test, f"検証期間（{WALKFORWARD_SPLIT_YEAR}年〜、未知データ）")
         print("学習期間と検証期間で勝率・平均損益が大きく変わらなければ、条件が過去データへの")
