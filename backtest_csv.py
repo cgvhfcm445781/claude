@@ -254,6 +254,21 @@ def get_asof_with_prev(series, dt):
     return curr, prev
 
 
+# --- 日本の33業種区分 → 米国セクターETF（SPDR Select Sector）の近似対応表 ---
+# 完全に一致する分類ではないため、近いセクターへの大まかな割り当て
+SECTOR_ETF_MAP = {
+    '水産・農林業': 'XLP', '鉱業': 'XLE', '建設業': 'XLI', '食料品': 'XLP',
+    '繊維製品': 'XLY', 'パルプ・紙': 'XLB', '化学': 'XLB', '医薬品': 'XLV',
+    '石油・石炭製品': 'XLE', 'ゴム製品': 'XLY', 'ガラス・土石製品': 'XLB',
+    '鉄鋼': 'XLB', '非鉄金属': 'XLB', '金属製品': 'XLB', '機械': 'XLI',
+    '電気機器': 'XLK', '輸送用機器': 'XLY', '精密機器': 'XLK', 'その他製品': 'XLY',
+    '電気・ガス業': 'XLU', '陸運業': 'XLI', '海運業': 'XLI', '空運業': 'XLI',
+    '倉庫・運輸関連業': 'XLI', '情報・通信業': 'XLC', '卸売業': 'XLI',
+    '小売業': 'XLY', '銀行業': 'XLF', '証券、商品先物取引業': 'XLF',
+    '保険業': 'XLF', 'その他金融業': 'XLF', '不動産業': 'XLRE', 'サービス業': 'XLY',
+}
+
+
 def calculate_rsi(series, period=14):
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
@@ -311,6 +326,22 @@ if __name__ == "__main__":
         fut_close_series = None
 
     cash_close_series = df_nk['Close'].sort_index()
+
+    print("米国セクターETFデータを取得中...")
+    us_sector_chg_series = {}  # {ETFティッカー: 日次変化率(%)の系列}
+    for etf in sorted(set(SECTOR_ETF_MAP.values())):
+        try:
+            df_etf = yf.download(etf, period="10y", interval="1d", progress=False, repair=True)
+            if isinstance(df_etf.columns, pd.MultiIndex):
+                df_etf.columns = df_etf.columns.get_level_values(0)
+            if df_etf.empty:
+                raise RuntimeError("空データ")
+            chg = df_etf['Close'].pct_change() * 100
+            us_sector_chg_series[etf] = chg.sort_index()
+        except Exception as e:
+            print(f"  ⚠ {etf} の取得に失敗（この業種のUSセクター指標はNoneになります）: {e}")
+            us_sector_chg_series[etf] = None
+    print(f"  取得完了: {sum(1 for v in us_sector_chg_series.values() if v is not None)}/{len(us_sector_chg_series)}銘柄")
 
     print(f"検証開始...")
 
@@ -439,6 +470,11 @@ if __name__ == "__main__":
                             # マイナスに大きい＝現物が先物の示唆以上に下げすぎている（理論上は「買い」のサイン）
                             overnight_gap = cash_chg_today - futures_overnight_chg
 
+                        # --- 前日の米国同業種セクターETFの値動き ---
+                        us_etf = SECTOR_ETF_MAP.get(sector)
+                        us_series = us_sector_chg_series.get(us_etf) if us_etf else None
+                        us_sector_chg = get_asof(us_series, entry_dt) if us_series is not None else np.nan
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -481,6 +517,7 @@ if __name__ == "__main__":
                                 'futures_overnight_chg': float(futures_overnight_chg) if not pd.isna(futures_overnight_chg) else None,
                                 'cash_chg_today': float(cash_chg_today) if not pd.isna(cash_chg_today) else None,
                                 'overnight_gap': float(overnight_gap) if not pd.isna(overnight_gap) else None,
+                                'us_sector_chg': float(us_sector_chg) if not pd.isna(us_sector_chg) else None,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -549,6 +586,7 @@ if __name__ == "__main__":
                                 'futures_overnight_chg': round(entry_meta['futures_overnight_chg'], 3) if entry_meta.get('futures_overnight_chg') is not None else None,
                                 'cash_chg_today': round(entry_meta['cash_chg_today'], 3) if entry_meta.get('cash_chg_today') is not None else None,
                                 'overnight_gap': round(entry_meta['overnight_gap'], 3) if entry_meta.get('overnight_gap') is not None else None,
+                                'us_sector_chg': round(entry_meta['us_sector_chg'], 3) if entry_meta.get('us_sector_chg') is not None else None,
                             })
                         is_holding = False
         except Exception as e:
