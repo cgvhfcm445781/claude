@@ -348,6 +348,8 @@ if __name__ == "__main__":
             vol_ratio = df_d['Volume'] / (vol_ma20 + 1e-10)
             sma25 = df_d['Close'].rolling(window=25).mean()
             sma25_dev = (df_d['Close'] - sma25) / sma25 * 100
+            sma5 = df_d['Close'].rolling(window=5).mean()
+            sma5_dev = (df_d['Close'] - sma5) / sma5 * 100
             msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
 
             is_holding = False
@@ -387,6 +389,8 @@ if __name__ == "__main__":
                         low_today = float(df_d['Low'].iloc[i])
                         is_bearish = 1 if close_today < open_today else 0          # 陰線（始値より終値が低い）
                         is_close_down = 1 if close_today < close_prev else 0        # 終値が前日より低い
+                        close_chg_prev_day = (close_today - close_prev) / close_prev * 100 if close_prev != 0 else np.nan  # 前日比変化率(%)
+                        sma5_dev_today = float(sma5_dev.iloc[i]) if not pd.isna(sma5_dev.iloc[i]) else np.nan  # 5日移動平均線からの乖離率(%)
 
                         # --- ローソク足の形状（連続値で記録し、閾値は後から自由に検証） ---
                         day_range = max(high_today - low_today, 1e-6)
@@ -461,6 +465,8 @@ if __name__ == "__main__":
                                 'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None,
                                 'is_bearish': is_bearish,
                                 'is_close_down': is_close_down,
+                                'close_chg_prev_day': round(close_chg_prev_day, 3) if not pd.isna(close_chg_prev_day) else None,
+                                'sma5_dev': round(sma5_dev_today, 3) if not pd.isna(sma5_dev_today) else None,
                                 'lower_shadow_ratio': round(lower_shadow_ratio, 3),
                                 'upper_shadow_ratio': round(upper_shadow_ratio, 3),
                                 'body_ratio': round(body_ratio, 3),
@@ -527,6 +533,8 @@ if __name__ == "__main__":
                                     'nikkei_sma25_dev') is not None else None,
                                 'is_bearish': entry_meta.get('is_bearish', 0),
                                 'is_close_down': entry_meta.get('is_close_down', 0),
+                                'close_chg_prev_day': entry_meta.get('close_chg_prev_day'),
+                                'sma5_dev': entry_meta.get('sma5_dev'),
                                 'lower_shadow_ratio': entry_meta.get('lower_shadow_ratio', 0),
                                 'upper_shadow_ratio': entry_meta.get('upper_shadow_ratio', 0),
                                 'body_ratio': entry_meta.get('body_ratio', 0),
