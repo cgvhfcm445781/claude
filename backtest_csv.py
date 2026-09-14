@@ -26,7 +26,7 @@ OVERSOLD_LEVEL = 20
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
 NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー（頻度を優先し実質無効化）
-EXCLUDE_TUESDAY = True       # 検証のため一時的に無効化中       # 火曜エントリーを除外
+EXCLUDE_TUESDAY = False       # 検証のため一時的に無効化中       # 火曜エントリーを除外
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 100.0  # 先物ベーシス条件（勝率への寄与が小さく、頻度を優先するため実質無効化）
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（大きく下げていた銘柄だけ採用）
