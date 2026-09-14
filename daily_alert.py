@@ -161,7 +161,7 @@ if __name__ == "__main__":
     if pd.isna(latest_nk_dev) or latest_nk_dev > NIKKEI_DEV_THRESHOLD:
         skip_reason = f"日経25日線乖離が条件({NIKKEI_DEV_THRESHOLD}%以下)を満たしていません（現在{latest_nk_dev:.2f}%）"
     elif EXCLUDE_TUESDAY and next_wd == 1:
-        skip_reason = "翌営業日が火曜のため、条件から除外されます"
+        skip_reason = "火曜のため条件から除外されます"
 
     if skip_reason:
         print(f"本日は地合いフィルタで対象外: {skip_reason}")
