@@ -26,7 +26,7 @@ OVERSOLD_LEVEL = 20
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
 NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー（頻度を優先し実質無効化）
-EXCLUDE_TUESDAY = False       # 検証のため一時的に無効化中       # 火曜エントリーを除外
+EXCLUDE_TUESDAY = True        # 火曜エントリーを除外（過去の大サンプル検証で根拠あり、今回の小サンプルでは再現しなかったが証拠不十分なだけと判断し維持）
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 100.0  # 先物ベーシス条件（勝率への寄与が小さく、頻度を優先するため実質無効化）
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（大きく下げていた銘柄だけ採用）
@@ -84,9 +84,14 @@ def get_jpx_stock_list():
             f"おそらくJPXからExcelではなくエラーページ(HTML等)が返ってきています。"
         )
 
-    target_markets = ['プライム（内国株式）']
+    target_markets = ['プライム（内国株式）', 'スタンダード（内国株式）', 'グロース（内国株式）']
     df = df[df['市場・商品区分'].isin(target_markets)].copy()
-    df['Market'] = 'プライム'
+    market_label_map = {
+        'プライム（内国株式）': 'プライム',
+        'スタンダード（内国株式）': 'スタンダード',
+        'グロース（内国株式）': 'グロース',
+    }
+    df['Market'] = df['市場・商品区分'].map(market_label_map)
     df['Ticker'] = df['コード'].astype(str) + ".T"
     return df[['Ticker', '銘柄名', '33業種区分', 'Market']]
 
@@ -300,7 +305,7 @@ if __name__ == "__main__":
     weekday_names = ["月曜", "火曜", "水曜", "木曜", "金曜"]
     weekday_perf = {name: {'profit': 0, 'trades': 0, 'wins': 0} for name in weekday_names}
     sector_perf = {}
-    market_perf = {'プライム': {'profit': 0, 'trades': 0, 'wins': 0}}
+    market_perf = {m: {'profit': 0, 'trades': 0, 'wins': 0} for m in ['プライム', 'スタンダード', 'グロース']}
 
     print("日経平均データを取得中...")
     df_nk = yf.download("^N225", period="10y", interval="1d", progress=False, repair=True)
