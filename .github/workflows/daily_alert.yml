@@ -2,10 +2,10 @@ name: Daily Signal Alert
 
 on:
   workflow_dispatch:   # 手動実行（テスト用）
-  schedule:
+  # schedule:
     # 日本時間 平日7:00頃（日本市場が開く前、米国市場が閉じた後）= UTC 22:00
     # UTC日曜〜木曜 22:00 が、日本時間の月〜金 7:00に対応
-    - cron: '0 22 * * 0-4'
+    # - cron: '0 22 * * 0-4'
 
 jobs:
   daily-alert:
