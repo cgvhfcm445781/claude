@@ -19,7 +19,7 @@ STOCH_SD_PERIOD = 3
 OVERSOLD_LEVEL = 20
 
 NIKKEI_DEV_THRESHOLD = 50.0  # 頻度を優先し実質無効化（backtest_csv.pyと同じ方針）
-EXCLUDE_TUESDAY = False
+EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り
 MAX_ALERT_COUNT = 20  # Discordに表示する候補数の上限（スコア上位から）
