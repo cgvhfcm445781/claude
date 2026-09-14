@@ -23,6 +23,10 @@ CHECK_POINTS = {
 # エントリー閾値の候補（この%以下に「現物の下げが先物の示唆より大きい」場合に買う）
 GAP_THRESHOLDS = [-0.3, -0.5, -0.8, -1.0, -1.5]
 
+# --- 個別株バックテストと同じ損切り・トレーリングルール ---
+LOSS_CUT_RATE = 0.03       # 3%損切り
+TRAILING_STOP_RATE = 0.02  # 2%トレーリングストップ
+
 
 def to_jst_naive(df):
     """タイムゾーン情報を日本時間に統一し、その後タイムゾーン情報を外す（比較しやすくするため）"""
@@ -86,6 +90,33 @@ if __name__ == "__main__":
             return np.nan
         return float(day_bars['Close'].iloc[-1])
 
+    def simulate_exit(intraday_df, date, entry_bar_time, entry_price):
+        """
+        エントリー後の1時間足を1本ずつ確認し、個別株バックテストと同じロジックで
+        損切り(-3%)・トレーリングストップ(-2%)・大引けのいずれかで決済する。
+        （個別株版と同様、各足の終値ベースで判定。日をまたいでは保有しない）
+        """
+        day_bars = intraday_df[intraday_df.index.normalize() == pd.Timestamp(date)]
+        after_entry = day_bars[day_bars.index > entry_bar_time]
+
+        m_price = entry_price  # 保有中の最高値（終値ベース）
+        for bar_time, row in after_entry.iterrows():
+            c = float(row['Close'])
+            m_price = max(m_price, c)
+            if c <= m_price * (1 - TRAILING_STOP_RATE) and c > entry_price:
+                return c, bar_time, "トレーリング"
+            elif c <= entry_price * (1 - LOSS_CUT_RATE):
+                return c, bar_time, "損切り"
+
+        # どちらにも該当しなければ、その日の最終バー（大引け）で決済
+        if len(after_entry) > 0:
+            last_time = after_entry.index[-1]
+            last_close = float(after_entry['Close'].iloc[-1])
+            return last_close, last_time, "大引け"
+        else:
+            # エントリー後にバーが無い（最終バーで約定した等）場合はエントリー価格のまま大引け扱い
+            return entry_price, entry_bar_time, "大引け"
+
     trading_days = sorted(set(df_nk_intraday.index.normalize()))
     print(f"対象営業日数: {len(trading_days)}日")
 
@@ -124,8 +155,11 @@ if __name__ == "__main__":
             if pd.isna(exec_price) or exec_bar_time is None:
                 continue
 
-            # 約定時点から、その日の大引けまで持った場合のリターン
-            ret_to_close = (day_close - exec_price) / exec_price * 100
+            # 約定時点から、損切り・トレーリング・大引けのいずれかで決済
+            exit_price, exit_bar_time, exit_reason = simulate_exit(
+                df_nk_intraday, date, exec_bar_time, exec_price
+            )
+            ret_to_close = (exit_price - exec_price) / exec_price * 100
 
             records.append({
                 'date': date_str,
@@ -138,8 +172,11 @@ if __name__ == "__main__":
                 'gap': round(gap, 3),
                 'decision_price': decision_price,
                 'exec_price': exec_price,
+                'exit_price': exit_price,
+                'exit_bar_time': str(exit_bar_time),
+                'exit_reason': exit_reason,
                 'day_close': day_close,
-                'return_to_close_pct': round(ret_to_close, 3),
+                'return_pct': round(ret_to_close, 3),
                 'is_win': 1 if ret_to_close > 0 else 0,
             })
 
@@ -159,7 +196,9 @@ if __name__ == "__main__":
                 print(f"  gap<={th}%: 該当なし")
                 continue
             win_rate = sub['is_win'].mean() * 100
-            avg_ret = sub['return_to_close_pct'].mean()
-            print(f"  gap<={th}%: 件数={len(sub)}, 勝率={win_rate:.1f}%, 平均リターン(大引けまで)={avg_ret:.2f}%")
+            avg_ret = sub['return_pct'].mean()
+            print(f"  gap<={th}%: 件数={len(sub)}, 勝率={win_rate:.1f}%, 平均リターン={avg_ret:.2f}%")
+            reason_counts = sub['exit_reason'].value_counts().to_dict()
+            print(f"    決済理由の内訳: {reason_counts}")
 
     print(f"\n総実行時間: {time.time() - start_time:.1f}秒")
