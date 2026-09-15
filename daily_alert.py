@@ -37,30 +37,49 @@ SECTOR_ETF_MAP = {
     '保険業': 'XLF', 'その他金融業': 'XLF', '不動産業': 'XLRE', 'サービス業': 'XLY',
 }
 
-# --- スコアリングモデル（ロジスティック回帰、7,227トレードで学習・2026年9月版） ---
-# 数値特徴量は標準化してから係数を掛ける
-SCORE_FEATURE_MEAN = {'rsi_14': 36.569, 'volume_ratio': 1.154, 'sma25_dev': -4.767}
-SCORE_FEATURE_SCALE = {'rsi_14': 12.168, 'volume_ratio': 0.619, 'sma25_dev': 5.018}
-SCORE_COEF = {'rsi_14': 0.1928, 'volume_ratio': 0.1244, 'sma25_dev': -0.2837}
-SCORE_INTERCEPT = 0.1940
-# 業種ボーナス（採用件数が少ない業種は 0 = 「その他」扱い）
-SECTOR_SCORE = {
-    '不動産業': 0.5022, '銀行業': 0.2851, '卸売業': 0.2231, 'ゴム製品': 0.3287,
-    'ガラス・土石製品': 0.1999, '非鉄金属': 0.1869, '建設業': 0.1160, '電気機器': 0.1323,
-    '化学': 0.0632, '機械': 0.0311, '繊維製品': 0.0143, '鉄鋼': -0.0224,
-    '医薬品': -0.0198, 'その他製品': -0.0322, '輸送用機器': -0.0822, '小売業': -0.0844,
-    'その他金融業': -0.0844, '金属製品': -0.0931, '食料品': -0.1184, '陸運業': -0.2020,
-    'サービス業': -0.2369, '精密機器': -0.3553, '情報・通信業': -0.4581, '電気・ガス業': -0.7942,
+# --- スコアリングモデル（ロジスティック回帰、市場区分ごとに別々に学習・2026年9月版） ---
+# プライム用（7,237トレードで学習）
+SCORE_FEATURE_MEAN_PRIME = {'rsi_14': 36.583, 'volume_ratio': 1.154, 'sma25_dev': -4.763}
+SCORE_FEATURE_SCALE_PRIME = {'rsi_14': 12.170, 'volume_ratio': 0.619, 'sma25_dev': 5.014}
+SCORE_COEF_PRIME = {'rsi_14': 0.1942, 'volume_ratio': 0.1278, 'sma25_dev': -0.2884}
+SCORE_INTERCEPT_PRIME = 0.2651
+SECTOR_SCORE_PRIME = {
+    '不動産業': 0.4199, '銀行業': 0.2149, 'ゴム製品': 0.2036, '卸売業': 0.1386,
+    '非鉄金属': 0.1070, '電気機器': 0.0600, '建設業': 0.0235, 'ガラス・土石製品': 0.0104,
+    '化学': -0.0041, '医薬品': -0.0566, '繊維製品': -0.0540, '機械': -0.0290,
+    'その他製品': -0.1147, 'その他金融業': -0.1257, '小売業': -0.1604, '輸送用機器': -0.1583,
+    '金属製品': -0.1642, '鉄鋼': -0.1344, '食料品': -0.1687, '陸運業': -0.2583,
+    'サービス業': -0.3199, '精密機器': -0.4322, '情報・通信業': -0.5439, '電気・ガス業': -0.8684,
+}
+
+# スタンダード用（1,049トレードで学習、サンプルが少ないため参考程度に）
+SCORE_FEATURE_MEAN_STANDARD = {'rsi_14': 35.966, 'volume_ratio': 1.224, 'sma25_dev': -6.109}
+SCORE_FEATURE_SCALE_STANDARD = {'rsi_14': 13.276, 'volume_ratio': 1.209, 'sma25_dev': 15.139}
+SCORE_COEF_STANDARD = {'rsi_14': -0.1107, 'volume_ratio': 0.1080, 'sma25_dev': -0.3042}
+SCORE_INTERCEPT_STANDARD = -0.0981
+SECTOR_SCORE_STANDARD = {
+    'その他製品': 0.5802, 'サービス業': 0.2952, '繊維製品': 0.2765, '精密機器': 0.2604,
+    '小売業': 0.2468, '輸送用機器': 0.1954, '化学': 0.1819, '機械': 0.1728,
+    'ガラス・土石製品': -0.0256, '電気機器': -0.0774, '不動産業': -0.2220, '卸売業': -0.2368,
+    '情報・通信業': -0.4334,
+}
+
+MARKET_MODELS = {
+    'プライム': (SCORE_FEATURE_MEAN_PRIME, SCORE_FEATURE_SCALE_PRIME, SCORE_COEF_PRIME,
+                SCORE_INTERCEPT_PRIME, SECTOR_SCORE_PRIME),
+    'スタンダード': (SCORE_FEATURE_MEAN_STANDARD, SCORE_FEATURE_SCALE_STANDARD, SCORE_COEF_STANDARD,
+                  SCORE_INTERCEPT_STANDARD, SECTOR_SCORE_STANDARD),
 }
 
 
-def win_probability_score(rsi_14, volume_ratio, sma25_dev, sector):
-    """過去データから学習したロジスティック回帰で、勝率の期待値を算出（0〜1）"""
-    z = SCORE_INTERCEPT
-    z += (rsi_14 - SCORE_FEATURE_MEAN['rsi_14']) / SCORE_FEATURE_SCALE['rsi_14'] * SCORE_COEF['rsi_14']
-    z += (volume_ratio - SCORE_FEATURE_MEAN['volume_ratio']) / SCORE_FEATURE_SCALE['volume_ratio'] * SCORE_COEF['volume_ratio']
-    z += (sma25_dev - SCORE_FEATURE_MEAN['sma25_dev']) / SCORE_FEATURE_SCALE['sma25_dev'] * SCORE_COEF['sma25_dev']
-    z += SECTOR_SCORE.get(sector, 0.0)
+def win_probability_score(rsi_14, volume_ratio, sma25_dev, sector, market):
+    """過去データから学習したロジスティック回帰で、勝率の期待値を算出（0〜1）。市場区分ごとに別モデルを使用"""
+    mean, scale, coef, intercept, sector_score = MARKET_MODELS.get(market, MARKET_MODELS['プライム'])
+    z = intercept
+    z += (rsi_14 - mean['rsi_14']) / scale['rsi_14'] * coef['rsi_14']
+    z += (volume_ratio - mean['volume_ratio']) / scale['volume_ratio'] * coef['volume_ratio']
+    z += (sma25_dev - mean['sma25_dev']) / scale['sma25_dev'] * coef['sma25_dev']
+    z += sector_score.get(sector, 0.0)
     return 1 / (1 + np.exp(-z))
 
 
@@ -81,10 +100,15 @@ def get_jpx_stock_list():
     content = res.content
     is_xlsx = content[:2] == b'PK'
     df = pd.read_excel(io.BytesIO(content), engine='openpyxl' if is_xlsx else 'xlrd')
-    target_markets = ['プライム（内国株式）']
+    target_markets = ['プライム（内国株式）', 'スタンダード（内国株式）']  # グロースは検証の結果、成績が明確に劣るため除外
     df = df[df['市場・商品区分'].isin(target_markets)].copy()
+    market_label_map = {
+        'プライム（内国株式）': 'プライム',
+        'スタンダード（内国株式）': 'スタンダード',
+    }
+    df['Market'] = df['市場・商品区分'].map(market_label_map)
     df['Ticker'] = df['コード'].astype(str) + ".T"
-    return df[['Ticker', '銘柄名', '33業種区分']]
+    return df[['Ticker', '銘柄名', '33業種区分', 'Market']]
 
 
 def calculate_stochastics(df, k_period=9, d_period=3, sd_period=3):
@@ -161,7 +185,7 @@ if __name__ == "__main__":
     if pd.isna(latest_nk_dev) or latest_nk_dev > NIKKEI_DEV_THRESHOLD:
         skip_reason = f"日経25日線乖離が条件({NIKKEI_DEV_THRESHOLD}%以下)を満たしていません（現在{latest_nk_dev:.2f}%）"
     elif EXCLUDE_TUESDAY and next_wd == 1:
-        skip_reason = "火曜のため条件から除外されます"
+        skip_reason = "翌営業日が火曜のため、条件から除外されます"
 
     if skip_reason:
         print(f"本日は地合いフィルタで対象外: {skip_reason}")
@@ -191,7 +215,7 @@ if __name__ == "__main__":
     hits = []
 
     for idx, row in stock_list.iterrows():
-        ticker, name, sector = row['Ticker'], row['銘柄名'], row['33業種区分']
+        ticker, name, sector, market = row['Ticker'], row['銘柄名'], row['33業種区分'], row['Market']
         try:
             df_d = yf.download(ticker, period="3mo", interval="1d", progress=False, repair=True)
             if df_d.empty or len(df_d) < 30:
@@ -244,12 +268,13 @@ if __name__ == "__main__":
 
             rsi_today = float(rsi_14.iloc[-1])
             sma_dev_today = float(sma25_dev.iloc[-1])
-            win_prob = win_probability_score(rsi_today, vr_today, sma_dev_today, sector)
+            win_prob = win_probability_score(rsi_today, vr_today, sma_dev_today, sector, market)
 
             hits.append({
                 'ticker': ticker,
                 'name': name,
                 'sector': sector,
+                'market': market,
                 'close': close,
                 'rsi_14': round(rsi_today, 1),
                 'volume_ratio': round(vr_today, 2),
@@ -276,7 +301,7 @@ if __name__ == "__main__":
         ]
         for h in display_hits:
             lines.append(
-                f"・`{h['ticker']}` {h['name']}（{h['sector']}） 推定勝率{h['win_prob']*100:.0f}%\n"
+                f"・`{h['ticker']}` {h['name']}（{h['sector']}・{h['market']}） 推定勝率{h['win_prob']*100:.0f}%\n"
                 f"　終値{h['close']:.0f}円 / RSI{h['rsi_14']} / 出来高比{h['volume_ratio']} / "
                 f"25日線乖離{h['sma25_dev']}% / 米国セクター前日比{h['us_sector_chg']}%"
             )
