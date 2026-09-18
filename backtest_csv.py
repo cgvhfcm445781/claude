@@ -38,7 +38,7 @@ if __name__ == "__main__":
     start_time = time.time()
 
     print(f"{TRADE_TICKER}（日足）を取得中...")
-    df_trade = yf.download(TRADE_TICKER, period="2y", interval="1d", progress=False, repair=True)
+    df_trade = yf.download(TRADE_TICKER, period="10y", interval="1d", progress=False, repair=True)
     if isinstance(df_trade.columns, pd.MultiIndex):
         df_trade.columns = df_trade.columns.get_level_values(0)
     df_trade = to_jst_naive(df_trade)
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     print("米国11セクターETFデータを取得中...")
     us_chg_series = {}
     for etf in US_SECTOR_ETFS:
-        df_etf = yf.download(etf, period="2y", interval="1d", progress=False, repair=True)
+        df_etf = yf.download(etf, period="10y", interval="1d", progress=False, repair=True)
         if isinstance(df_etf.columns, pd.MultiIndex):
             df_etf.columns = df_etf.columns.get_level_values(0)
         df_etf = to_jst_naive(df_etf)
