@@ -1,0 +1,46 @@
+name: No Bad News Backtest
+
+on:
+  workflow_dispatch:   # 手動実行
+
+permissions:
+  contents: write
+
+jobs:
+  no-bad-news-backtest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: |
+          pip install yfinance pandas numpy scipy scikit-learn
+
+      - name: 「悪材料なし」バックテストを実行
+        run: python no_bad_news_backtest.py
+
+      - name: 結果CSVをリポジトリにコミット
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          if [ ! -f output/no_bad_news_backtest.csv ]; then
+            echo "⚠ 結果ファイルが存在しません。コミットをスキップします。"
+            exit 0
+          fi
+          git add output/no_bad_news_backtest.csv
+          git diff --staged --quiet && echo "変更なし、コミットをスキップ" || git commit -m "悪材料なしバックテスト結果を更新 $(date +'%Y-%m-%d %H:%M')"
+          git push
+
+      - name: Artifactとしても保存
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: no-bad-news-backtest-csv
+          path: output/no_bad_news_backtest.csv
+          if-no-files-found: warn
