@@ -84,7 +84,7 @@ def get_jpx_stock_list():
             f"おそらくJPXからExcelではなくエラーページ(HTML等)が返ってきています。"
         )
 
-    target_markets = ['プライム（内国株式）', 'スタンダード（内国株式）', 'グロース（内国株式）']
+    target_markets = ['プライム（内国株式）', 'スタンダード（内国株式）']  # グロースは検証の結果、成績が明確に劣るため除外
     df = df[df['市場・商品区分'].isin(target_markets)].copy()
     market_label_map = {
         'プライム（内国株式）': 'プライム',
@@ -437,6 +437,36 @@ if __name__ == "__main__":
                         upper_shadow_ratio = (high_today - body_top) / day_range     # 上ヒゲの割合（0〜1）
                         body_ratio = (body_top - body_bottom) / day_range           # 実体の割合（0〜1）
 
+                        # --- 過去5日分のローソク足パターン（GC条件とは別の予測材料として検証用） ---
+                        lookback_n = 5
+                        if i - lookback_n >= 0:
+                            hi5 = df_d['High'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            lo5 = df_d['Low'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            op5 = df_d['Open'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            cl5 = df_d['Close'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            rng5 = np.maximum(hi5 - lo5, 1e-6)
+                            body_top5 = np.maximum(op5, cl5)
+                            body_bottom5 = np.minimum(op5, cl5)
+
+                            up_days_last5 = int((cl5 > op5).sum())
+                            close_prev5 = float(df_d['Close'].iloc[i - lookback_n])
+                            return_5d = (close_today - close_prev5) / close_prev5 * 100 if close_prev5 != 0 else np.nan
+                            avg_body_ratio_last5 = float(((body_top5 - body_bottom5) / rng5).mean())
+                            avg_lower_shadow_last5 = float(((body_bottom5 - lo5) / rng5).mean())
+
+                            consecutive_down_days = 0
+                            for j in range(i, max(i - lookback_n, -1), -1):
+                                if float(df_d['Close'].iloc[j]) < float(df_d['Close'].iloc[j - 1]):
+                                    consecutive_down_days += 1
+                                else:
+                                    break
+                        else:
+                            up_days_last5 = None
+                            return_5d = None
+                            avg_body_ratio_last5 = None
+                            avg_lower_shadow_last5 = None
+                            consecutive_down_days = None
+
                         # --- MSB / OB 判定（銘柄ごとに事前計算済みの系列を参照） ---
                         msb_ob = {
                             'msb_confirmed': int(msb_series['msb_confirmed'].iloc[i]),
@@ -514,6 +544,11 @@ if __name__ == "__main__":
                                 'lower_shadow_ratio': round(lower_shadow_ratio, 3),
                                 'upper_shadow_ratio': round(upper_shadow_ratio, 3),
                                 'body_ratio': round(body_ratio, 3),
+                                'up_days_last5': up_days_last5,
+                                'consecutive_down_days': consecutive_down_days,
+                                'return_5d': round(return_5d, 3) if return_5d is not None and not pd.isna(return_5d) else None,
+                                'avg_body_ratio_last5': round(avg_body_ratio_last5, 3) if avg_body_ratio_last5 is not None else None,
+                                'avg_lower_shadow_last5': round(avg_lower_shadow_last5, 3) if avg_lower_shadow_last5 is not None else None,
                                 'msb_confirmed': msb_ob['msb_confirmed'],
                                 'in_ob_zone': msb_ob['in_ob_zone'],
                                 'bars_since_msb': msb_ob['bars_since_msb'],
@@ -583,6 +618,11 @@ if __name__ == "__main__":
                                 'lower_shadow_ratio': entry_meta.get('lower_shadow_ratio', 0),
                                 'upper_shadow_ratio': entry_meta.get('upper_shadow_ratio', 0),
                                 'body_ratio': entry_meta.get('body_ratio', 0),
+                                'up_days_last5': entry_meta.get('up_days_last5'),
+                                'consecutive_down_days': entry_meta.get('consecutive_down_days'),
+                                'return_5d': entry_meta.get('return_5d'),
+                                'avg_body_ratio_last5': entry_meta.get('avg_body_ratio_last5'),
+                                'avg_lower_shadow_last5': entry_meta.get('avg_lower_shadow_last5'),
                                 'msb_confirmed': entry_meta.get('msb_confirmed', 0),
                                 'in_ob_zone': entry_meta.get('in_ob_zone', 0),
                                 'bars_since_msb': entry_meta.get('bars_since_msb'),
