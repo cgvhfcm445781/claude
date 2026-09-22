@@ -24,7 +24,7 @@ EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り
 MAX_ALERT_COUNT = 20  # Discordに表示する候補数の上限（スコア上位から）
-MIN_ALERT_COUNT = 2   # 高確度な候補だけでこの件数に満たない場合、通常候補で補充する最低件数
+MIN_ALERT_COUNT = 10   # 高確度な候補だけでこの件数に満たない場合、通常候補で補充する最低件数
 
 # --- 日本の33業種区分 → 米国セクターETF（SPDR Select Sector）の近似対応表 ---
 SECTOR_ETF_MAP = {
