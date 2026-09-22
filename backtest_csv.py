@@ -437,6 +437,33 @@ if __name__ == "__main__":
                         upper_shadow_ratio = (high_today - body_top) / day_range     # 上ヒゲの割合（0〜1）
                         body_ratio = (body_top - body_bottom) / day_range           # 実体の割合（0〜1）
 
+                        # --- 古典的なローソク足パターン（強気の反転サインとして知られるもの） ---
+                        open_prev = float(df_d['Open'].iloc[i - 1])
+                        is_hammer = 1 if (lower_shadow_ratio >= 0.6 and body_ratio <= 0.3 and upper_shadow_ratio <= 0.1) else 0
+                        is_bullish_engulfing = 1 if (
+                            close_today > open_today and close_prev < open_prev and
+                            open_today <= close_prev and close_today >= open_prev
+                        ) else 0
+                        is_doji = 1 if body_ratio <= 0.1 else 0
+                        # 明けの明星：2日前が大陰線、前日が小さい実体（窓を開けて下）、当日が大陽線で
+                        # 2日前の実体の中間より上まで戻す、という3本足パターン
+                        is_morning_star = 0
+                        if i - 2 >= 0:
+                            open_2, close_2 = float(df_d['Open'].iloc[i - 2]), float(df_d['Close'].iloc[i - 2])
+                            high_2, low_2 = float(df_d['High'].iloc[i - 2]), float(df_d['Low'].iloc[i - 2])
+                            range_2 = max(high_2 - low_2, 1e-6)
+                            body_2 = abs(close_2 - open_2) / range_2
+                            open_1, close_1 = open_prev, close_prev
+                            high_1, low_1 = float(df_d['High'].iloc[i - 1]), float(df_d['Low'].iloc[i - 1])
+                            range_1 = max(high_1 - low_1, 1e-6)
+                            body_1 = abs(close_1 - open_1) / range_1
+                            mid_2 = (open_2 + close_2) / 2
+                            if (close_2 < open_2 and body_2 >= 0.5 and          # 2日前：大陰線
+                                    body_1 <= 0.3 and max(open_1, close_1) < close_2 and  # 前日：小さい実体、窓を開けて下
+                                    close_today > open_today and body_ratio >= 0.5 and  # 当日：大陽線
+                                    close_today > mid_2):                       # 2日前の実体の中間より上まで戻す
+                                is_morning_star = 1
+
                         # --- 過去5日分のローソク足パターン（GC条件とは別の予測材料として検証用） ---
                         lookback_n = 5
                         if i - lookback_n >= 0:
@@ -549,6 +576,10 @@ if __name__ == "__main__":
                                 'return_5d': round(return_5d, 3) if return_5d is not None and not pd.isna(return_5d) else None,
                                 'avg_body_ratio_last5': round(avg_body_ratio_last5, 3) if avg_body_ratio_last5 is not None else None,
                                 'avg_lower_shadow_last5': round(avg_lower_shadow_last5, 3) if avg_lower_shadow_last5 is not None else None,
+                                'is_hammer': is_hammer,
+                                'is_bullish_engulfing': is_bullish_engulfing,
+                                'is_doji': is_doji,
+                                'is_morning_star': is_morning_star,
                                 'msb_confirmed': msb_ob['msb_confirmed'],
                                 'in_ob_zone': msb_ob['in_ob_zone'],
                                 'bars_since_msb': msb_ob['bars_since_msb'],
@@ -623,6 +654,10 @@ if __name__ == "__main__":
                                 'return_5d': entry_meta.get('return_5d'),
                                 'avg_body_ratio_last5': entry_meta.get('avg_body_ratio_last5'),
                                 'avg_lower_shadow_last5': entry_meta.get('avg_lower_shadow_last5'),
+                                'is_hammer': entry_meta.get('is_hammer', 0),
+                                'is_bullish_engulfing': entry_meta.get('is_bullish_engulfing', 0),
+                                'is_doji': entry_meta.get('is_doji', 0),
+                                'is_morning_star': entry_meta.get('is_morning_star', 0),
                                 'msb_confirmed': entry_meta.get('msb_confirmed', 0),
                                 'in_ob_zone': entry_meta.get('in_ob_zone', 0),
                                 'bars_since_msb': entry_meta.get('bars_since_msb'),
