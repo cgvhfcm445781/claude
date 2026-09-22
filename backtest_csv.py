@@ -283,6 +283,89 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 
+def calculate_rci(series, period=9):
+    """RCI（順位相関指数）：価格の順位と時間の順位の相関を-100〜100で表す"""
+    def _rci(window):
+        price_rank = pd.Series(window).rank(ascending=False)  # 値が大きいほど順位1に近い
+        time_rank = np.arange(1, len(window) + 1)  # 直近が1（新しいほど小さい順位）
+        d_sq_sum = ((price_rank.values - time_rank[::-1]) ** 2).sum()
+        n = len(window)
+        return (1 - 6 * d_sq_sum / (n * (n ** 2 - 1))) * 100
+    return series.rolling(window=period).apply(_rci, raw=True)
+
+
+def calculate_bollinger(series, period=20, num_std=2):
+    """ボリンジャーバンド：%b（バンド内でのポジション、0=下限、1=上限）を返す"""
+    sma = series.rolling(window=period).mean()
+    std = series.rolling(window=period).std()
+    upper = sma + num_std * std
+    lower = sma - num_std * std
+    percent_b = (series - lower) / ((upper - lower) + 1e-10)
+    return percent_b
+
+
+def calculate_macd(series, fast=12, slow=26, signal=9):
+    """MACD：MACDライン、シグナルライン、ヒストグラムを返す"""
+    ema_fast = series.ewm(span=fast, adjust=False).mean()
+    ema_slow = series.ewm(span=slow, adjust=False).mean()
+    macd_line = ema_fast - ema_slow
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
+
+
+def calculate_dmi_adx(df, period=14):
+    """DMI/ADX：+DI, -DI, ADX（トレンドの強さ）を返す"""
+    high, low, close = df['High'], df['Low'], df['Close']
+    up_move = high.diff()
+    down_move = -low.diff()
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+    tr = pd.concat([
+        high - low, (high - close.shift()).abs(), (low - close.shift()).abs()
+    ], axis=1).max(axis=1)
+
+    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
+    plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-10)
+    minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-10)
+    dx = 100 * (plus_di - minus_di).abs() / ((plus_di + minus_di) + 1e-10)
+    adx = dx.ewm(alpha=1 / period, adjust=False).mean()
+    return plus_di, minus_di, adx
+
+
+def calculate_psychological_line(series, period=12):
+    """サイコロジカルライン：直近period日のうち上昇した日の割合(%)"""
+    up_days = (series.diff() > 0).astype(int)
+    return up_days.rolling(window=period).mean() * 100
+
+
+def calculate_ichimoku(df):
+    """
+    一目均衡表：転換線・基準線・雲（先行スパンA/B）・遅行スパンを計算する。
+    先行スパンは26日先に描画されるものなので、当日の位置に来るよう26日分shiftしてある
+    （＝当日チャートに表示されている雲は、26日前の転換線・基準線から計算されたもの）。
+    """
+    high, low, close = df['High'], df['Low'], df['Close']
+    tenkan = (high.rolling(window=9).max() + low.rolling(window=9).min()) / 2
+    kijun = (high.rolling(window=26).max() + low.rolling(window=26).min()) / 2
+    senkou_a = ((tenkan + kijun) / 2).shift(26)
+    senkou_b = ((high.rolling(window=52).max() + low.rolling(window=52).min()) / 2).shift(26)
+    kumo_top = pd.concat([senkou_a, senkou_b], axis=1).max(axis=1)
+    kumo_bottom = pd.concat([senkou_a, senkou_b], axis=1).min(axis=1)
+
+    # 価格が雲のどの位置にあるか（上抜け=プラス、下抜け=マイナス、雲の中=0、%で正規化）
+    cloud_position = pd.Series(np.where(
+        close > kumo_top, (close - kumo_top) / kumo_top * 100,
+        np.where(close < kumo_bottom, (close - kumo_bottom) / kumo_bottom * 100, 0.0)
+    ), index=df.index)
+
+    tenkan_kijun_diff = (tenkan - kijun) / kijun * 100  # プラス=転換線が基準線より上（強気）
+    cloud_color = np.where(senkou_a > senkou_b, 1, -1)  # 1=陽の雲（強気）, -1=陰の雲（弱気）
+    chikou_signal = np.where(close > close.shift(26), 1, -1)  # 遅行スパンが26日前の株価より上か
+
+    return cloud_position, tenkan_kijun_diff, pd.Series(cloud_color, index=df.index), pd.Series(chikou_signal, index=df.index)
+
+
 def export_to_csv(df, path=OUTPUT_FILE):
     """Pandas DataFrameをCSVへ出力（GitHub Actionsのartifactでも取得しやすい形）"""
     try:
@@ -388,6 +471,15 @@ if __name__ == "__main__":
             sma5 = df_d['Close'].rolling(window=5).mean()
             sma5_dev = (df_d['Close'] - sma5) / sma5 * 100
             msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
+
+            # --- 追加のテクニカル指標（証券アプリの左メニューにあった主要指標） ---
+            bb_percent_b = calculate_bollinger(df_d['Close'], period=20, num_std=2)
+            macd_line, macd_signal, macd_hist = calculate_macd(df_d['Close'])
+            rci_9 = calculate_rci(df_d['Close'], period=9)
+            plus_di, minus_di, adx = calculate_dmi_adx(df_d, period=14)
+            psycho_12 = calculate_psychological_line(df_d['Close'], period=12)
+            volatility_20 = df_d['Close'].pct_change().rolling(window=20).std() * 100  # 標準偏差（ボラティリティ）
+            cloud_position, tenkan_kijun_diff, cloud_color, chikou_signal = calculate_ichimoku(df_d)
 
             is_holding = False
             e_price, m_price, e_date = 0, 0, None
@@ -580,6 +672,18 @@ if __name__ == "__main__":
                                 'is_bullish_engulfing': is_bullish_engulfing,
                                 'is_doji': is_doji,
                                 'is_morning_star': is_morning_star,
+                                'bb_percent_b': round(float(bb_percent_b.iloc[i]), 3) if not pd.isna(bb_percent_b.iloc[i]) else None,
+                                'macd_hist': round(float(macd_hist.iloc[i]), 4) if not pd.isna(macd_hist.iloc[i]) else None,
+                                'rci_9': round(float(rci_9.iloc[i]), 2) if not pd.isna(rci_9.iloc[i]) else None,
+                                'plus_di': round(float(plus_di.iloc[i]), 2) if not pd.isna(plus_di.iloc[i]) else None,
+                                'minus_di': round(float(minus_di.iloc[i]), 2) if not pd.isna(minus_di.iloc[i]) else None,
+                                'adx': round(float(adx.iloc[i]), 2) if not pd.isna(adx.iloc[i]) else None,
+                                'psycho_12': round(float(psycho_12.iloc[i]), 2) if not pd.isna(psycho_12.iloc[i]) else None,
+                                'volatility_20': round(float(volatility_20.iloc[i]), 3) if not pd.isna(volatility_20.iloc[i]) else None,
+                                'ichimoku_cloud_position': round(float(cloud_position.iloc[i]), 3) if not pd.isna(cloud_position.iloc[i]) else None,
+                                'ichimoku_tenkan_kijun_diff': round(float(tenkan_kijun_diff.iloc[i]), 3) if not pd.isna(tenkan_kijun_diff.iloc[i]) else None,
+                                'ichimoku_cloud_color': int(cloud_color.iloc[i]) if not pd.isna(cloud_color.iloc[i]) else None,
+                                'ichimoku_chikou_signal': int(chikou_signal.iloc[i]) if not pd.isna(chikou_signal.iloc[i]) else None,
                                 'msb_confirmed': msb_ob['msb_confirmed'],
                                 'in_ob_zone': msb_ob['in_ob_zone'],
                                 'bars_since_msb': msb_ob['bars_since_msb'],
@@ -658,6 +762,18 @@ if __name__ == "__main__":
                                 'is_bullish_engulfing': entry_meta.get('is_bullish_engulfing', 0),
                                 'is_doji': entry_meta.get('is_doji', 0),
                                 'is_morning_star': entry_meta.get('is_morning_star', 0),
+                                'bb_percent_b': entry_meta.get('bb_percent_b'),
+                                'macd_hist': entry_meta.get('macd_hist'),
+                                'rci_9': entry_meta.get('rci_9'),
+                                'plus_di': entry_meta.get('plus_di'),
+                                'minus_di': entry_meta.get('minus_di'),
+                                'adx': entry_meta.get('adx'),
+                                'psycho_12': entry_meta.get('psycho_12'),
+                                'volatility_20': entry_meta.get('volatility_20'),
+                                'ichimoku_cloud_position': entry_meta.get('ichimoku_cloud_position'),
+                                'ichimoku_tenkan_kijun_diff': entry_meta.get('ichimoku_tenkan_kijun_diff'),
+                                'ichimoku_cloud_color': entry_meta.get('ichimoku_cloud_color'),
+                                'ichimoku_chikou_signal': entry_meta.get('ichimoku_chikou_signal'),
                                 'msb_confirmed': entry_meta.get('msb_confirmed', 0),
                                 'in_ob_zone': entry_meta.get('in_ob_zone', 0),
                                 'bars_since_msb': entry_meta.get('bars_since_msb'),
