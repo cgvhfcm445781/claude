@@ -417,7 +417,8 @@ if __name__ == "__main__":
     cash_close_series = df_nk['Close'].sort_index()
 
     print("米国セクターETFデータを取得中...")
-    us_sector_chg_series = {}  # {ETFティッカー: 日次変化率(%)の系列}
+    us_sector_chg_series = {}   # {ETFティッカー: 日次変化率(%)の系列}
+    us_sector_close_series = {}  # {ETFティッカー: 終値の系列}（連続下落日数・累積リターン計算用）
     for etf in sorted(set(SECTOR_ETF_MAP.values())):
         try:
             df_etf = yf.download(etf, period="10y", interval="1d", progress=False, repair=True)
@@ -427,10 +428,32 @@ if __name__ == "__main__":
                 raise RuntimeError("空データ")
             chg = df_etf['Close'].pct_change() * 100
             us_sector_chg_series[etf] = chg.sort_index()
+            us_sector_close_series[etf] = df_etf['Close'].sort_index()
         except Exception as e:
             print(f"  ⚠ {etf} の取得に失敗（この業種のUSセクター指標はNoneになります）: {e}")
             us_sector_chg_series[etf] = None
+            us_sector_close_series[etf] = None
     print(f"  取得完了: {sum(1 for v in us_sector_chg_series.values() if v is not None)}/{len(us_sector_chg_series)}銘柄")
+
+    def us_sector_crash_progress(close_series, dt, n=5):
+        """米国セクターETFの「暴落の進行度」：連続下落日数とn日累積リターンを返す
+        （その時点で確定しているデータのみ使用、先読みなし）"""
+        if close_series is None or len(close_series) == 0:
+            return None, None
+        pos = close_series.index.searchsorted(dt, side='right') - 1
+        if pos < n:
+            return None, None
+        window = close_series.iloc[pos - n + 1:pos + 1]
+        cum_return = (window.iloc[-1] - close_series.iloc[pos - n]) / close_series.iloc[pos - n] * 100
+        consecutive_down = 0
+        for j in range(pos, pos - n, -1):
+            if j - 1 < 0:
+                break
+            if close_series.iloc[j] < close_series.iloc[j - 1]:
+                consecutive_down += 1
+            else:
+                break
+        return consecutive_down, cum_return
 
     print(f"検証開始...")
 
@@ -630,6 +653,12 @@ if __name__ == "__main__":
                         us_series = us_sector_chg_series.get(us_etf) if us_etf else None
                         us_sector_chg = get_asof(us_series, entry_dt) if us_series is not None else np.nan
 
+                        # --- 米国同業種セクターの「暴落の進行度」（悪化中か改善中かの目安） ---
+                        us_close_series = us_sector_close_series.get(us_etf) if us_etf else None
+                        us_sector_consecutive_down, us_sector_return_5d = us_sector_crash_progress(
+                            us_close_series, entry_dt, n=5
+                        ) if us_close_series is not None else (None, None)
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -696,6 +725,8 @@ if __name__ == "__main__":
                                 'cash_chg_today': float(cash_chg_today) if not pd.isna(cash_chg_today) else None,
                                 'overnight_gap': float(overnight_gap) if not pd.isna(overnight_gap) else None,
                                 'us_sector_chg': float(us_sector_chg) if not pd.isna(us_sector_chg) else None,
+                                'us_sector_consecutive_down': us_sector_consecutive_down,
+                                'us_sector_return_5d': round(us_sector_return_5d, 3) if us_sector_return_5d is not None else None,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -786,6 +817,8 @@ if __name__ == "__main__":
                                 'cash_chg_today': round(entry_meta['cash_chg_today'], 3) if entry_meta.get('cash_chg_today') is not None else None,
                                 'overnight_gap': round(entry_meta['overnight_gap'], 3) if entry_meta.get('overnight_gap') is not None else None,
                                 'us_sector_chg': round(entry_meta['us_sector_chg'], 3) if entry_meta.get('us_sector_chg') is not None else None,
+                                'us_sector_consecutive_down': entry_meta.get('us_sector_consecutive_down'),
+                                'us_sector_return_5d': entry_meta.get('us_sector_return_5d'),
                             })
                         is_holding = False
         except Exception as e:
