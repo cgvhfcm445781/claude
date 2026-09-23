@@ -6,7 +6,6 @@ import io
 import os
 import warnings
 import time
-import joblib
 from datetime import datetime, timedelta
 
 warnings.simplefilter('ignore', FutureWarning)
@@ -24,7 +23,6 @@ EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り
 MAX_ALERT_COUNT = 20  # Discordに表示する候補数の上限（スコア上位から）
-MIN_ALERT_COUNT = 10   # 高確度な候補だけでこの件数に満たない場合、通常候補で補充する最低件数
 
 # --- 日本の33業種区分 → 米国セクターETF（SPDR Select Sector）の近似対応表 ---
 SECTOR_ETF_MAP = {
@@ -39,10 +37,51 @@ SECTOR_ETF_MAP = {
     '保険業': 'XLF', 'その他金融業': 'XLF', '不動産業': 'XLRE', 'サービス業': 'XLY',
 }
 
-# --- ランダムフォレストのスコアリングモデル（8,305トレードで学習・2026年9月版） ---
-# rf_model.pkl / rf_features.pkl をリポジトリ直下に置いておく必要がある
-RF_MODEL_PATH = "rf_model.pkl"
-RF_FEATURES_PATH = "rf_features.pkl"
+# --- スコアリングモデル（ロジスティック回帰、市場区分ごとに別々に学習・2026年9月版） ---
+# プライム用（7,237トレードで学習）
+SCORE_FEATURE_MEAN_PRIME = {'rsi_14': 36.583, 'volume_ratio': 1.154, 'sma25_dev': -4.763}
+SCORE_FEATURE_SCALE_PRIME = {'rsi_14': 12.170, 'volume_ratio': 0.619, 'sma25_dev': 5.014}
+SCORE_COEF_PRIME = {'rsi_14': 0.1942, 'volume_ratio': 0.1278, 'sma25_dev': -0.2884}
+SCORE_INTERCEPT_PRIME = 0.2651
+SECTOR_SCORE_PRIME = {
+    '不動産業': 0.4199, '銀行業': 0.2149, 'ゴム製品': 0.2036, '卸売業': 0.1386,
+    '非鉄金属': 0.1070, '電気機器': 0.0600, '建設業': 0.0235, 'ガラス・土石製品': 0.0104,
+    '化学': -0.0041, '医薬品': -0.0566, '繊維製品': -0.0540, '機械': -0.0290,
+    'その他製品': -0.1147, 'その他金融業': -0.1257, '小売業': -0.1604, '輸送用機器': -0.1583,
+    '金属製品': -0.1642, '鉄鋼': -0.1344, '食料品': -0.1687, '陸運業': -0.2583,
+    'サービス業': -0.3199, '精密機器': -0.4322, '情報・通信業': -0.5439, '電気・ガス業': -0.8684,
+}
+
+# スタンダード用（1,049トレードで学習、サンプルが少ないため参考程度に）
+SCORE_FEATURE_MEAN_STANDARD = {'rsi_14': 35.966, 'volume_ratio': 1.224, 'sma25_dev': -6.109}
+SCORE_FEATURE_SCALE_STANDARD = {'rsi_14': 13.276, 'volume_ratio': 1.209, 'sma25_dev': 15.139}
+SCORE_COEF_STANDARD = {'rsi_14': -0.1107, 'volume_ratio': 0.1080, 'sma25_dev': -0.3042}
+SCORE_INTERCEPT_STANDARD = -0.0981
+SECTOR_SCORE_STANDARD = {
+    'その他製品': 0.5802, 'サービス業': 0.2952, '繊維製品': 0.2765, '精密機器': 0.2604,
+    '小売業': 0.2468, '輸送用機器': 0.1954, '化学': 0.1819, '機械': 0.1728,
+    'ガラス・土石製品': -0.0256, '電気機器': -0.0774, '不動産業': -0.2220, '卸売業': -0.2368,
+    '情報・通信業': -0.4334,
+}
+
+MARKET_MODELS = {
+    'プライム': (SCORE_FEATURE_MEAN_PRIME, SCORE_FEATURE_SCALE_PRIME, SCORE_COEF_PRIME,
+                SCORE_INTERCEPT_PRIME, SECTOR_SCORE_PRIME),
+    'スタンダード': (SCORE_FEATURE_MEAN_STANDARD, SCORE_FEATURE_SCALE_STANDARD, SCORE_COEF_STANDARD,
+                  SCORE_INTERCEPT_STANDARD, SECTOR_SCORE_STANDARD),
+}
+
+
+def win_probability_score(rsi_14, volume_ratio, sma25_dev, sector, market):
+    """過去データから学習したロジスティック回帰で、勝率の期待値を算出（0〜1）。市場区分ごとに別モデルを使用"""
+    mean, scale, coef, intercept, sector_score = MARKET_MODELS.get(market, MARKET_MODELS['プライム'])
+    z = intercept
+    z += (rsi_14 - mean['rsi_14']) / scale['rsi_14'] * coef['rsi_14']
+    z += (volume_ratio - mean['volume_ratio']) / scale['volume_ratio'] * coef['volume_ratio']
+    z += (sma25_dev - mean['sma25_dev']) / scale['sma25_dev'] * coef['sma25_dev']
+    z += sector_score.get(sector, 0.0)
+    return 1 / (1 + np.exp(-z))
+
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 NOTIFY_ON_EMPTY = True  # 該当銘柄が0件の日も通知するか
@@ -89,80 +128,6 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 
-def calculate_rci(series, period=9):
-    """RCI（順位相関指数）：価格の順位と時間の順位の相関を-100〜100で表す"""
-    def _rci(window):
-        price_rank = pd.Series(window).rank(ascending=False)
-        time_rank = np.arange(1, len(window) + 1)
-        d_sq_sum = ((price_rank.values - time_rank[::-1]) ** 2).sum()
-        n = len(window)
-        return (1 - 6 * d_sq_sum / (n * (n ** 2 - 1))) * 100
-    return series.rolling(window=period).apply(_rci, raw=True)
-
-
-def calculate_bollinger(series, period=20, num_std=2):
-    """ボリンジャーバンド：%b（バンド内でのポジション、0=下限、1=上限）を返す"""
-    sma = series.rolling(window=period).mean()
-    std = series.rolling(window=period).std()
-    upper = sma + num_std * std
-    lower = sma - num_std * std
-    return (series - lower) / ((upper - lower) + 1e-10)
-
-
-def calculate_macd(series, fast=12, slow=26, signal=9):
-    """MACD：MACDライン、シグナルライン、ヒストグラムを返す"""
-    ema_fast = series.ewm(span=fast, adjust=False).mean()
-    ema_slow = series.ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    return macd_line, signal_line, macd_line - signal_line
-
-
-def calculate_dmi_adx(df, period=14):
-    """DMI/ADX：+DI, -DI, ADX（トレンドの強さ）を返す"""
-    high, low, close = df['High'], df['Low'], df['Close']
-    up_move = high.diff()
-    down_move = -low.diff()
-    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-    tr = pd.concat([
-        high - low, (high - close.shift()).abs(), (low - close.shift()).abs()
-    ], axis=1).max(axis=1)
-
-    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
-    plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-10)
-    minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-10)
-    dx = 100 * (plus_di - minus_di).abs() / ((plus_di + minus_di) + 1e-10)
-    adx = dx.ewm(alpha=1 / period, adjust=False).mean()
-    return plus_di, minus_di, adx
-
-
-def calculate_psychological_line(series, period=12):
-    """サイコロジカルライン：直近period日のうち上昇した日の割合(%)"""
-    up_days = (series.diff() > 0).astype(int)
-    return up_days.rolling(window=period).mean() * 100
-
-
-def calculate_ichimoku(df):
-    """一目均衡表：雲との位置関係・転換線基準線の差・雲の色・遅行スパンのシグナルを返す"""
-    high, low, close = df['High'], df['Low'], df['Close']
-    tenkan = (high.rolling(window=9).max() + low.rolling(window=9).min()) / 2
-    kijun = (high.rolling(window=26).max() + low.rolling(window=26).min()) / 2
-    senkou_a = ((tenkan + kijun) / 2).shift(26)
-    senkou_b = ((high.rolling(window=52).max() + low.rolling(window=52).min()) / 2).shift(26)
-    kumo_top = pd.concat([senkou_a, senkou_b], axis=1).max(axis=1)
-    kumo_bottom = pd.concat([senkou_a, senkou_b], axis=1).min(axis=1)
-
-    cloud_position = pd.Series(np.where(
-        close > kumo_top, (close - kumo_top) / kumo_top * 100,
-        np.where(close < kumo_bottom, (close - kumo_bottom) / kumo_bottom * 100, 0.0)
-    ), index=df.index)
-    tenkan_kijun_diff = (tenkan - kijun) / kijun * 100
-    cloud_color = np.where(senkou_a > senkou_b, 1, -1)
-    chikou_signal = np.where(close > close.shift(26), 1, -1)
-    return cloud_position, tenkan_kijun_diff, pd.Series(cloud_color, index=df.index), pd.Series(chikou_signal, index=df.index)
-
-
 def next_trading_day_weekday(today):
     """簡易版：土日を考慮した翌営業日の曜日（祝日は考慮していない点に注意）"""
     nxt = today + timedelta(days=1)
@@ -197,17 +162,6 @@ def send_discord_message(content):
 
 if __name__ == "__main__":
     start_time = time.time()
-
-    print("ランダムフォレストモデルを読み込み中...")
-    if not os.path.exists(RF_MODEL_PATH) or not os.path.exists(RF_FEATURES_PATH):
-        raise RuntimeError(
-            f"{RF_MODEL_PATH} / {RF_FEATURES_PATH} が見つかりません。"
-            f"リポジトリ直下に配置されているか確認してください。"
-        )
-    rf_model = joblib.load(RF_MODEL_PATH)
-    rf_features = joblib.load(RF_FEATURES_PATH)
-    print(f"  読み込み完了。使用する特徴量({len(rf_features)}個): {rf_features}")
-
     print("日経平均データを取得中...")
     df_nk = yf.download("^N225", period="3mo", interval="1d", progress=False, repair=True)
     if df_nk.empty:
@@ -263,9 +217,8 @@ if __name__ == "__main__":
     for idx, row in stock_list.iterrows():
         ticker, name, sector, market = row['Ticker'], row['銘柄名'], row['33業種区分'], row['Market']
         try:
-            # 一目均衡表の雲は52日+26日先行の計算が必要なため、少し長めに取得
-            df_d = yf.download(ticker, period="6mo", interval="1d", progress=False, repair=True)
-            if df_d.empty or len(df_d) < 80:
+            df_d = yf.download(ticker, period="3mo", interval="1d", progress=False, repair=True)
+            if df_d.empty or len(df_d) < 30:
                 continue
             if isinstance(df_d.columns, pd.MultiIndex):
                 df_d.columns = df_d.columns.get_level_values(0)
@@ -273,7 +226,7 @@ if __name__ == "__main__":
             price_cols = ['Open', 'High', 'Low', 'Close']
             df_d[price_cols] = df_d[price_cols].where(df_d[price_cols] > 0)
             df_d = df_d.dropna(subset=price_cols)
-            if len(df_d) < 80:
+            if len(df_d) < 30:
                 continue
 
             close = float(df_d['Close'].iloc[-1])
@@ -306,85 +259,16 @@ if __name__ == "__main__":
             if vr_today < MIN_VOLUME_RATIO:
                 continue
 
-            # --- 米国同業種セクターETFの前日変化率（ハードフィルタではなく「高確度」フラグとして記録） ---
+            # --- 米国同業種セクターETFの前日変化率をチェック ---
             us_etf = SECTOR_ETF_MAP.get(sector)
             us_series = us_sector_chg_series.get(us_etf) if us_etf else None
             us_sector_chg = get_asof(us_series, df_d.index[-1]) if us_series is not None else np.nan
-            is_high_confidence = (not pd.isna(us_sector_chg)) and (us_sector_chg <= US_SECTOR_CHG_THRESHOLD)
-
-            # --- ランダムフォレスト用の特徴量を計算 ---
-            i = len(df_d) - 1
-            open_today = float(df_d['Open'].iloc[i])
-            close_today = close
-            close_prev = float(df_d['Close'].iloc[i - 1])
-            high_today = float(df_d['High'].iloc[i])
-            low_today = float(df_d['Low'].iloc[i])
-            day_range = max(high_today - low_today, 1e-6)
-            body_top = max(open_today, close_today)
-            body_bottom = min(open_today, close_today)
-            lower_shadow_ratio = (body_bottom - low_today) / day_range
-            upper_shadow_ratio = (high_today - body_top) / day_range
-            body_ratio = (body_top - body_bottom) / day_range
-
-            lookback_n = 5
-            if i - lookback_n < 0:
-                continue
-            hi5 = df_d['High'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
-            lo5 = df_d['Low'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
-            op5 = df_d['Open'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
-            cl5 = df_d['Close'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
-            rng5 = np.maximum(hi5 - lo5, 1e-6)
-            body_top5 = np.maximum(op5, cl5)
-            body_bottom5 = np.minimum(op5, cl5)
-            up_days_last5 = int((cl5 > op5).sum())
-            close_prev5 = float(df_d['Close'].iloc[i - lookback_n])
-            return_5d = (close_today - close_prev5) / close_prev5 * 100 if close_prev5 != 0 else np.nan
-            avg_body_ratio_last5 = float(((body_top5 - body_bottom5) / rng5).mean())
-            avg_lower_shadow_last5 = float(((body_bottom5 - lo5) / rng5).mean())
-            consecutive_down_days = 0
-            for j in range(i, max(i - lookback_n, -1), -1):
-                if float(df_d['Close'].iloc[j]) < float(df_d['Close'].iloc[j - 1]):
-                    consecutive_down_days += 1
-                else:
-                    break
-
-            bb_percent_b = calculate_bollinger(df_d['Close'], period=20, num_std=2)
-            macd_line, macd_signal, macd_hist = calculate_macd(df_d['Close'])
-            rci_9 = calculate_rci(df_d['Close'], period=9)
-            plus_di, minus_di, adx = calculate_dmi_adx(df_d, period=14)
-            psycho_12 = calculate_psychological_line(df_d['Close'], period=12)
-            volatility_20 = df_d['Close'].pct_change().rolling(window=20).std() * 100
-            cloud_position, tenkan_kijun_diff, cloud_color, chikou_signal = calculate_ichimoku(df_d)
-
-            feature_values = {
-                'rsi_14': float(rsi_14.iloc[i]),
-                'volume_ratio': vr_today,
-                'sma25_dev': float(sma25_dev.iloc[i]),
-                'bb_percent_b': float(bb_percent_b.iloc[i]),
-                'macd_hist': float(macd_hist.iloc[i]),
-                'rci_9': float(rci_9.iloc[i]),
-                'plus_di': float(plus_di.iloc[i]),
-                'minus_di': float(minus_di.iloc[i]),
-                'adx': float(adx.iloc[i]),
-                'psycho_12': float(psycho_12.iloc[i]),
-                'volatility_20': float(volatility_20.iloc[i]),
-                'ichimoku_cloud_position': float(cloud_position.iloc[i]),
-                'ichimoku_tenkan_kijun_diff': float(tenkan_kijun_diff.iloc[i]),
-                'ichimoku_cloud_color': float(cloud_color.iloc[i]),
-                'ichimoku_chikou_signal': float(chikou_signal.iloc[i]),
-                'up_days_last5': up_days_last5,
-                'consecutive_down_days': consecutive_down_days,
-                'return_5d': return_5d,
-                'avg_body_ratio_last5': avg_body_ratio_last5,
-                'avg_lower_shadow_last5': avg_lower_shadow_last5,
-            }
-
-            # 欠損があるとモデルに通せないのでスキップ（データ不足の銘柄）
-            if any(pd.isna(v) for v in feature_values.values()):
+            if pd.isna(us_sector_chg) or us_sector_chg > US_SECTOR_CHG_THRESHOLD:
                 continue
 
-            X_row = pd.DataFrame([[feature_values[f] for f in rf_features]], columns=rf_features)
-            win_prob = float(rf_model.predict_proba(X_row)[0, 1])
+            rsi_today = float(rsi_14.iloc[-1])
+            sma_dev_today = float(sma25_dev.iloc[-1])
+            win_prob = win_probability_score(rsi_today, vr_today, sma_dev_today, sector, market)
 
             hits.append({
                 'ticker': ticker,
@@ -392,11 +276,10 @@ if __name__ == "__main__":
                 'sector': sector,
                 'market': market,
                 'close': close,
-                'rsi_14': round(feature_values['rsi_14'], 1),
+                'rsi_14': round(rsi_today, 1),
                 'volume_ratio': round(vr_today, 2),
-                'sma25_dev': round(feature_values['sma25_dev'], 2),
-                'us_sector_chg': round(float(us_sector_chg), 2) if not pd.isna(us_sector_chg) else None,
-                'is_high_confidence': is_high_confidence,
+                'sma25_dev': round(sma_dev_today, 2),
+                'us_sector_chg': round(float(us_sector_chg), 2),
                 'win_prob': win_prob,
             })
         except Exception:
@@ -408,27 +291,19 @@ if __name__ == "__main__":
     print(f"\n該当銘柄数: {len(hits)}")
 
     if hits:
-        high_conf = sorted([h for h in hits if h['is_high_confidence']], key=lambda h: h['win_prob'], reverse=True)
-        regular = sorted([h for h in hits if not h['is_high_confidence']], key=lambda h: h['win_prob'], reverse=True)
-
-        # 高確度（米国セクター条件クリア）を優先し、それだけで最低件数に満たなければ
-        # 条件を満たさない銘柄もスコア上位から補充する（頻度の底上げ用）
-        display_hits = high_conf[:MAX_ALERT_COUNT]
-        if len(display_hits) < MIN_ALERT_COUNT:
-            need = MIN_ALERT_COUNT - len(display_hits)
-            display_hits = display_hits + regular[:need]
-
+        hits.sort(key=lambda h: h['win_prob'], reverse=True)  # 勝率スコアが高い順に並べ替え
+        total_hits = len(hits)
+        display_hits = hits[:MAX_ALERT_COUNT]
         lines = [
             f"📈 **買いシグナル検出**（{latest_nk_date.date()}終値時点、翌営業日エントリー候補）",
-            f"高確度(米国セクター条件クリア): {len(high_conf)}件 / それ以外: {len(regular)}件\n",
+            f"※米国同業種ETF前日比<={US_SECTOR_CHG_THRESHOLD}%を満たす銘柄のみ、勝率スコア上位{len(display_hits)}件を表示"
+            + (f"（全{total_hits}件中）" if total_hits > MAX_ALERT_COUNT else "") + "\n",
         ]
         for h in display_hits:
-            tag = "🟢高確度" if h['is_high_confidence'] else "⚪通常"
-            us_txt = f"{h['us_sector_chg']}%" if h['us_sector_chg'] is not None else "N/A"
             lines.append(
-                f"・{tag} `{h['ticker']}` {h['name']}（{h['sector']}・{h['market']}） 推定勝率{h['win_prob']*100:.0f}%\n"
+                f"・`{h['ticker']}` {h['name']}（{h['sector']}・{h['market']}） 推定勝率{h['win_prob']*100:.0f}%\n"
                 f"　終値{h['close']:.0f}円 / RSI{h['rsi_14']} / 出来高比{h['volume_ratio']} / "
-                f"25日線乖離{h['sma25_dev']}% / 米国セクター前日比{us_txt}"
+                f"25日線乖離{h['sma25_dev']}% / 米国セクター前日比{h['us_sector_chg']}%"
             )
         message = "\n".join(lines)
         print(message)
