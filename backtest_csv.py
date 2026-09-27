@@ -800,7 +800,6 @@ if __name__ == "__main__":
                                 'us_sector_return_5d': round(us_sector_return_5d, 3) if us_sector_return_5d is not None else None,
                                 'weekly_candle_bullish': weekly_candle_bullish,
                                 'current_week_bullish_so_far': current_week_bullish_so_far,
-                                'weekly_candle_mode': weekly_candle_mode,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -895,7 +894,6 @@ if __name__ == "__main__":
                                 'us_sector_return_5d': entry_meta.get('us_sector_return_5d'),
                                 'weekly_candle_bullish': entry_meta.get('weekly_candle_bullish'),
                                 'current_week_bullish_so_far': entry_meta.get('current_week_bullish_so_far'),
-                                'weekly_candle_mode': entry_meta.get('weekly_candle_mode'),
                             })
                         is_holding = False
         except Exception as e:
