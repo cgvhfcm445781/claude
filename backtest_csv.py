@@ -362,8 +362,73 @@ def calculate_ichimoku(df):
     tenkan_kijun_diff = (tenkan - kijun) / kijun * 100  # プラス=転換線が基準線より上（強気）
     cloud_color = np.where(senkou_a > senkou_b, 1, -1)  # 1=陽の雲（強気）, -1=陰の雲（弱気）
     chikou_signal = np.where(close > close.shift(26), 1, -1)  # 遅行スパンが26日前の株価より上か
-
     return cloud_position, tenkan_kijun_diff, pd.Series(cloud_color, index=df.index), pd.Series(chikou_signal, index=df.index)
+
+
+def build_weekly_candles(df_d):
+    """
+    日足から週足（月〜金、週の終わりは金曜）を作る。
+    週の途中でシグナル判定をする場合は、この関数の結果からさらに
+    「直近の"確定済み"週足」だけを get_last_completed_weekly_candle() で参照すること
+    （今週分はまだ未確定なので絶対に使わない）。
+    """
+    weekly = df_d[['Open', 'High', 'Low', 'Close']].resample('W-FRI').agg(
+        {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}
+    ).dropna()
+    return weekly
+
+
+def get_last_completed_weekly_candle(weekly, entry_dt):
+    """
+    entry_dt時点で「確定済み」の直近の週足（陽線かどうか）を取得する。
+    月〜金いつ判定しても、必ず先週までに確定した週足を参照する
+    （今週分は金曜が来るまで未確定として扱う）ので、曜日によって結果がブレない。
+    """
+    current_week_monday = entry_dt - pd.Timedelta(days=entry_dt.weekday())
+    completed = weekly[weekly.index < current_week_monday]
+    if len(completed) == 0:
+        return None
+    last = completed.iloc[-1]
+    return 1 if last['Close'] > last['Open'] else 0
+
+
+def get_current_week_candle_so_far(df_d, entry_dt):
+    """
+    entry_dt時点で「今週、月曜の始値からentry_dtの終値まで」形成中の週足が陽線かどうかを取得する。
+    木・金など週の後半は、先週の確定済み週足より今週の形成中の足の方が新しい情報を反映している
+    可能性があるため、比較検証用に別途用意する（もちろん未来のデータは一切使わない）。
+    """
+    current_week_monday = entry_dt - pd.Timedelta(days=entry_dt.weekday())
+    week_bars = df_d.loc[(df_d.index >= current_week_monday) & (df_d.index <= entry_dt)]
+    if len(week_bars) == 0:
+        return None
+    week_open = float(week_bars['Open'].iloc[0])
+    week_close = float(week_bars['Close'].iloc[-1])
+    return 1 if week_close > week_open else 0
+
+
+WEEKLY_CANDLE_SWITCH_WEEKDAY = 3  # 0=月,1=火,2=水,3=木,4=金。この曜日以降は「形成中の今週の足」を使う
+
+
+def get_weekly_candle_signal(df_d, weekly, entry_dt, i, switch_weekday=WEEKLY_CANDLE_SWITCH_WEEKDAY):
+    """
+    月〜水（switch_weekday未満）：まだ今週の情報が少なすぎるので、先週の確定済み週足を使う。
+    木・金（switch_weekday以上）：週の大部分（4〜5日）が固まっているので、
+    今週の月曜始値〜当日終値までの「形成中の週足」の方が新しく意味があると判断し、そちらを使う。
+    戻り値: (陽線なら1・陰線なら0, どちらのモードを使ったか"確定済み"/"形成中")
+    """
+    if entry_dt.weekday() >= switch_weekday:
+        current_week_monday = entry_dt - pd.Timedelta(days=entry_dt.weekday())
+        this_week = df_d[(df_d.index >= current_week_monday) & (df_d.index <= entry_dt)]
+        if len(this_week) == 0:
+            return None, None
+        week_open = float(this_week['Open'].iloc[0])
+        today_close = float(df_d['Close'].iloc[i])
+        return (1 if today_close > week_open else 0), "形成中"
+    else:
+        return get_last_completed_weekly_candle(weekly, entry_dt), "確定済み"
+
+
 
 
 def export_to_csv(df, path=OUTPUT_FILE):
@@ -494,6 +559,7 @@ if __name__ == "__main__":
             sma5 = df_d['Close'].rolling(window=5).mean()
             sma5_dev = (df_d['Close'] - sma5) / sma5 * 100
             msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
+            weekly_candles = build_weekly_candles(df_d)  # 週足も銘柄ごとに1回だけ作成
 
             # --- 追加のテクニカル指標（証券アプリの左メニューにあった主要指標） ---
             bb_percent_b = calculate_bollinger(df_d['Close'], period=20, num_std=2)
@@ -659,6 +725,11 @@ if __name__ == "__main__":
                             us_close_series, entry_dt, n=5
                         ) if us_close_series is not None else (None, None)
 
+                        # --- 直近の"確定済み"週足が陽線だったか（今週分は未確定なので使わない） ---
+                        weekly_candle_bullish = get_last_completed_weekly_candle(weekly_candles, entry_dt)
+                        # --- （比較用）今週、月曜からentry_dtまで形成中の週足が陽線か ---
+                        current_week_bullish_so_far = get_current_week_candle_so_far(df_d, entry_dt)
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -727,6 +798,9 @@ if __name__ == "__main__":
                                 'us_sector_chg': float(us_sector_chg) if not pd.isna(us_sector_chg) else None,
                                 'us_sector_consecutive_down': us_sector_consecutive_down,
                                 'us_sector_return_5d': round(us_sector_return_5d, 3) if us_sector_return_5d is not None else None,
+                                'weekly_candle_bullish': weekly_candle_bullish,
+                                'current_week_bullish_so_far': current_week_bullish_so_far,
+                                'weekly_candle_mode': weekly_candle_mode,
                             }
                 else:
                     m_price = max(m_price, close)
@@ -819,6 +893,9 @@ if __name__ == "__main__":
                                 'us_sector_chg': round(entry_meta['us_sector_chg'], 3) if entry_meta.get('us_sector_chg') is not None else None,
                                 'us_sector_consecutive_down': entry_meta.get('us_sector_consecutive_down'),
                                 'us_sector_return_5d': entry_meta.get('us_sector_return_5d'),
+                                'weekly_candle_bullish': entry_meta.get('weekly_candle_bullish'),
+                                'current_week_bullish_so_far': entry_meta.get('current_week_bullish_so_far'),
+                                'weekly_candle_mode': entry_meta.get('weekly_candle_mode'),
                             })
                         is_holding = False
         except Exception as e:
