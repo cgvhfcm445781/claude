@@ -500,6 +500,38 @@ if __name__ == "__main__":
             us_sector_close_series[etf] = None
     print(f"  取得完了: {sum(1 for v in us_sector_chg_series.values() if v is not None)}/{len(us_sector_chg_series)}銘柄")
 
+    def find_best_matching_etf(df_d, us_chg_series_dict, naive_etf, min_overlap=100):
+        """
+        この銘柄の日次リターンと、各米国セクターETFの「前営業日比」（us_sector_chgと同じ基準）との
+        相関を計算し、最も相関が強いETFを探す。あわせて、素直な業種マッピング先のETFとの相関も返す
+        （先読みなし：各日について、その日時点で確定しているETF側の値とだけ突き合わせる）。
+        """
+        stock_ret = df_d['Close'].pct_change() * 100
+        dates = df_d.index
+
+        etf_us_vals = {}
+        for etf, series in us_chg_series_dict.items():
+            if series is None:
+                continue
+            # get_asofと同じ「その日時点で確定している直近値」を、reindex+ffillで高速に一括計算
+            etf_us_vals[etf] = series.reindex(series.index.union(dates)).ffill().reindex(dates)
+
+        best_etf, best_corr = None, -2.0
+        naive_corr = None
+        for etf, us_vals in etf_us_vals.items():
+            paired = pd.concat([stock_ret, us_vals], axis=1).dropna()
+            if len(paired) < min_overlap:
+                continue
+            corr = paired.iloc[:, 0].corr(paired.iloc[:, 1])
+            if pd.isna(corr):
+                continue
+            if etf == naive_etf:
+                naive_corr = corr
+            if corr > best_corr:
+                best_etf, best_corr = etf, corr
+
+        return best_etf, (best_corr if best_etf is not None else None), naive_corr
+
     def us_sector_crash_progress(close_series, dt, n=5):
         """米国セクターETFの「暴落の進行度」：連続下落日数とn日累積リターンを返す
         （その時点で確定しているデータのみ使用、先読みなし）"""
@@ -547,6 +579,12 @@ if __name__ == "__main__":
                 # 疑わしい行はスキップ対象として除外（トレード判定・指標計算から外す）
                 df_d = df_d[~suspicious]
             if len(df_d) < 30: continue
+
+            # --- この銘柄と米国セクターETFとの相関を計算（銘柄ごとに1回だけ） ---
+            naive_etf = SECTOR_ETF_MAP.get(sector)
+            best_matching_etf, best_etf_corr, naive_etf_corr = find_best_matching_etf(
+                df_d, us_sector_chg_series, naive_etf
+            )
 
             daily_value = df_d['Close'] * df_d['Volume']
             ma_value_10 = daily_value.rolling(window=10).mean()
@@ -798,6 +836,10 @@ if __name__ == "__main__":
                                 'us_sector_chg': float(us_sector_chg) if not pd.isna(us_sector_chg) else None,
                                 'us_sector_consecutive_down': us_sector_consecutive_down,
                                 'us_sector_return_5d': round(us_sector_return_5d, 3) if us_sector_return_5d is not None else None,
+                                'naive_etf': naive_etf,
+                                'naive_etf_corr': round(naive_etf_corr, 3) if naive_etf_corr is not None else None,
+                                'best_matching_etf': best_matching_etf,
+                                'best_etf_corr': round(best_etf_corr, 3) if best_etf_corr is not None else None,
                                 'weekly_candle_bullish': weekly_candle_bullish,
                                 'current_week_bullish_so_far': current_week_bullish_so_far,
                             }
@@ -892,6 +934,10 @@ if __name__ == "__main__":
                                 'us_sector_chg': round(entry_meta['us_sector_chg'], 3) if entry_meta.get('us_sector_chg') is not None else None,
                                 'us_sector_consecutive_down': entry_meta.get('us_sector_consecutive_down'),
                                 'us_sector_return_5d': entry_meta.get('us_sector_return_5d'),
+                                'naive_etf': entry_meta.get('naive_etf'),
+                                'naive_etf_corr': entry_meta.get('naive_etf_corr'),
+                                'best_matching_etf': entry_meta.get('best_matching_etf'),
+                                'best_etf_corr': entry_meta.get('best_etf_corr'),
                                 'weekly_candle_bullish': entry_meta.get('weekly_candle_bullish'),
                                 'current_week_bullish_so_far': entry_meta.get('current_week_bullish_so_far'),
                             })
