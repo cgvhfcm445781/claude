@@ -29,7 +29,8 @@ NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に�
 EXCLUDE_TUESDAY = True        # 火曜エントリーを除外（過去の大サンプル検証で根拠あり、今回の小サンプルでは再現しなかったが証拠不十分なだけと判断し維持）
 MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
 FUTURES_BASIS_THRESHOLD = 100.0  # 先物ベーシス条件（勝率への寄与が小さく、頻度を優先するため実質無効化）
-US_SECTOR_CHG_THRESHOLD = 100.0  # 検証のため一時的に実質無効化中（本来は-1.3）
+US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（ハードな足切り条件）
+NAIVE_ETF_CORR_THRESHOLD = 0.08  # 業種マッピングで割り当てたETFとの実際の相関がこれ未満なら見送り（相関が弱い＝シグナルが意味をなさない銘柄を除外）
 
 # --- 既知の暴落期間の除外リスト ---
 # 「日経-5%乖離で買う」は通常の調整局面では機能するが、コロナショックのような
@@ -782,6 +783,8 @@ if __name__ == "__main__":
                                 continue  # 先物ベーシスがプラス（先物が現物より強気）の日は見送り
                             if pd.isna(us_sector_chg) or us_sector_chg > US_SECTOR_CHG_THRESHOLD:
                                 continue  # 米国同業種セクターがあまり下げていない銘柄は見送り
+                            if naive_etf_corr is None or naive_etf_corr < NAIVE_ETF_CORR_THRESHOLD:
+                                continue  # 業種マッピング先ETFとの相関が弱い銘柄は見送り（シグナルが意味をなさないため）
 
                         if tomorrow_open * 100 <= INITIAL_CASH:
                             is_holding = True
@@ -976,7 +979,8 @@ if __name__ == "__main__":
         print(f"\n=== ウォークフォワード検証（フィルタ適用: {USE_ENTRY_FILTERS}） ===")
         print(f"条件: 日経25日線乖離 <= {NIKKEI_DEV_THRESHOLD}%, "
               f"火曜除外={EXCLUDE_TUESDAY}, 出来高比率 >= {MIN_VOLUME_RATIO}, "
-              f"先物ベーシス < {FUTURES_BASIS_THRESHOLD}, 米国同業種ETF前日比 <= {US_SECTOR_CHG_THRESHOLD}%")
+              f"先物ベーシス < {FUTURES_BASIS_THRESHOLD}, 米国同業種ETF前日比 <= {US_SECTOR_CHG_THRESHOLD}%, "
+              f"業種ETF相関 >= {NAIVE_ETF_CORR_THRESHOLD}")
         _summary(train, f"学習期間（〜{WALKFORWARD_SPLIT_YEAR - 1}年）")
         _summary(test, f"検証期間（{WALKFORWARD_SPLIT_YEAR}年〜、未知データ）")
         print("学習期間と検証期間で勝率・平均損益が大きく変わらなければ、条件が過去データへの")
