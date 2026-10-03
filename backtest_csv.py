@@ -597,6 +597,16 @@ if __name__ == "__main__":
             sma25_dev = (df_d['Close'] - sma25) / sma25 * 100
             sma5 = df_d['Close'].rolling(window=5).mean()
             sma5_dev = (df_d['Close'] - sma5) / sma5 * 100
+            sma100 = df_d['Close'].rolling(window=100).mean()
+            sma100_dev = (df_d['Close'] - sma100) / sma100 * 100
+            # 「支持線として意識されたか」：安値が線の近くまで下げたのに、終値は線より上で戻ったか（2%以内を「近い」とする）
+            touched_sma25_support = ((df_d['Low'] <= sma25 * 1.02) & (df_d['Close'] > sma25)).astype(int)
+            touched_sma100_support = ((df_d['Low'] <= sma100 * 1.02) & (df_d['Close'] > sma100)).astype(int)
+            # 移動平均線自体の傾き（n日前の線の値と比べて、線そのものが上向きか下向きか）
+            sma25_slope = (sma25 - sma25.shift(5)) / sma25.shift(5) * 100
+            sma100_slope = (sma100 - sma100.shift(10)) / sma100.shift(10) * 100
+            sma25_rising = (sma25_slope > 0).astype(int)
+            sma100_rising = (sma100_slope > 0).astype(int)
             msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
             weekly_candles = build_weekly_candles(df_d)  # 週足も銘柄ごとに1回だけ作成
 
@@ -809,6 +819,13 @@ if __name__ == "__main__":
                                 'return_5d': round(return_5d, 3) if return_5d is not None and not pd.isna(return_5d) else None,
                                 'avg_body_ratio_last5': round(avg_body_ratio_last5, 3) if avg_body_ratio_last5 is not None else None,
                                 'avg_lower_shadow_last5': round(avg_lower_shadow_last5, 3) if avg_lower_shadow_last5 is not None else None,
+                                'sma100_dev': round(float(sma100_dev.iloc[i]), 3) if not pd.isna(sma100_dev.iloc[i]) else None,
+                                'touched_sma25_support': int(touched_sma25_support.iloc[i]),
+                                'touched_sma100_support': int(touched_sma100_support.iloc[i]),
+                                'sma25_slope': round(float(sma25_slope.iloc[i]), 3) if not pd.isna(sma25_slope.iloc[i]) else None,
+                                'sma100_slope': round(float(sma100_slope.iloc[i]), 3) if not pd.isna(sma100_slope.iloc[i]) else None,
+                                'sma25_rising': int(sma25_rising.iloc[i]),
+                                'sma100_rising': int(sma100_rising.iloc[i]),
                                 'is_hammer': is_hammer,
                                 'is_bullish_engulfing': is_bullish_engulfing,
                                 'is_doji': is_doji,
@@ -907,6 +924,13 @@ if __name__ == "__main__":
                                 'return_5d': entry_meta.get('return_5d'),
                                 'avg_body_ratio_last5': entry_meta.get('avg_body_ratio_last5'),
                                 'avg_lower_shadow_last5': entry_meta.get('avg_lower_shadow_last5'),
+                                'sma100_dev': entry_meta.get('sma100_dev'),
+                                'touched_sma25_support': entry_meta.get('touched_sma25_support', 0),
+                                'touched_sma100_support': entry_meta.get('touched_sma100_support', 0),
+                                'sma25_slope': entry_meta.get('sma25_slope'),
+                                'sma100_slope': entry_meta.get('sma100_slope'),
+                                'sma25_rising': entry_meta.get('sma25_rising', 0),
+                                'sma100_rising': entry_meta.get('sma100_rising', 0),
                                 'is_hammer': entry_meta.get('is_hammer', 0),
                                 'is_bullish_engulfing': entry_meta.get('is_bullish_engulfing', 0),
                                 'is_doji': entry_meta.get('is_doji', 0),
