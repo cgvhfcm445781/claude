@@ -23,6 +23,8 @@ NIKKEI_DEV_THRESHOLD = 50.0  # 頻度を優先し実質無効化（backtest_csv.
 EXCLUDE_TUESDAY = True
 MIN_VOLUME_RATIO = 0.5
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（ハードな足切り条件）
+NAIVE_ETF_CORR_THRESHOLD = 0.08  # 業種マッピング先ETFとの実際の相関がこれ未満なら見送り
+CORR_MIN_OVERLAP = 100  # 相関計算に必要な最低データ件数
 MAX_ALERT_COUNT = 20  # 足切り後の候補がこれを超えたら、AIスコア上位からこの件数まで絞る
 TOP_TIER_WIN_PROB_THRESHOLD = 0.6  # メイン条件を満たした銘柄のうち、AIスコアがこれ以上なら「厳選」として別枠で強調表示
 
@@ -181,6 +183,20 @@ def get_asof(series, dt):
     return series.iloc[pos]
 
 
+def calc_etf_corr(df_d, us_series, min_overlap=100):
+    """この銘柄の日次リターンと、割り当てられた米国セクターETFとの相関係数を計算（先読みなし）"""
+    if us_series is None:
+        return None
+    stock_ret = df_d['Close'].pct_change() * 100
+    dates = df_d.index
+    us_vals = us_series.reindex(us_series.index.union(dates)).ffill().reindex(dates)
+    paired = pd.concat([stock_ret, us_vals], axis=1).dropna()
+    if len(paired) < min_overlap:
+        return None
+    corr = paired.iloc[:, 0].corr(paired.iloc[:, 1])
+    return None if pd.isna(corr) else float(corr)
+
+
 def send_discord_message(content):
     if not DISCORD_WEBHOOK_URL:
         print("⚠ DISCORD_WEBHOOK_URL が設定されていません。通知をスキップします。")
@@ -311,6 +327,11 @@ if __name__ == "__main__":
             us_series = us_sector_chg_series.get(us_etf) if us_etf else None
             us_sector_chg = get_asof(us_series, df_d.index[-1]) if us_series is not None else np.nan
             if pd.isna(us_sector_chg) or us_sector_chg > US_SECTOR_CHG_THRESHOLD:
+                continue
+
+            # --- 業種マッピング先ETFとの相関が弱い銘柄は見送り（シグナルが意味をなさないため） ---
+            naive_etf_corr = calc_etf_corr(df_d, us_series, min_overlap=CORR_MIN_OVERLAP)
+            if naive_etf_corr is None or naive_etf_corr < NAIVE_ETF_CORR_THRESHOLD:
                 continue
 
             # --- ランダムフォレスト用の特徴量を計算（足切り後の母集団だけで学習したモデルを使う） ---
