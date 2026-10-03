@@ -32,6 +32,11 @@ FUTURES_BASIS_THRESHOLD = 100.0  # 先物ベーシス条件（勝率への寄与
 US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（ハードな足切り条件）
 NAIVE_ETF_CORR_THRESHOLD = 0.08  # 業種マッピングで割り当てたETFとの実際の相関がこれ未満なら見送り（相関が弱い＝シグナルが意味をなさない銘柄を除外）
 
+# --- GC確認後、追加のローソク足パターン（ピンバー・ハンマー・陽の包み線のいずれか）が
+#     出るまで待ってからエントリーする機能（検証用） ---
+REQUIRE_CONFIRMATION_PATTERN = True   # Falseにすれば今まで通り即日翌日エントリーに戻せる
+MAX_CONFIRMATION_WAIT_DAYS = 5        # この日数以内に確認パターンが出なければ、そのシグナルは見送り
+
 # --- 既知の暴落期間の除外リスト ---
 # 「日経-5%乖離で買う」は通常の調整局面では機能するが、コロナショックのような
 # 急激かつ継続的な暴落では逆効果（下げ止まらず損切り連発）だったため、
@@ -619,6 +624,23 @@ if __name__ == "__main__":
             volatility_20 = df_d['Close'].pct_change().rolling(window=20).std() * 100  # 標準偏差（ボラティリティ）
             cloud_position, tenkan_kijun_diff, cloud_color, chikou_signal = calculate_ichimoku(df_d)
 
+            # --- 「エントリー確認パターン」をベクトル化して事前計算（待機ロジック用） ---
+            _open_s, _close_s, _high_s, _low_s = df_d['Open'], df_d['Close'], df_d['High'], df_d['Low']
+            _range_s = (_high_s - _low_s).clip(lower=1e-6)
+            _body_top_s = pd.concat([_open_s, _close_s], axis=1).max(axis=1)
+            _body_bottom_s = pd.concat([_open_s, _close_s], axis=1).min(axis=1)
+            _lower_shadow_s = (_body_bottom_s - _low_s) / _range_s
+            _upper_shadow_s = (_high_s - _body_top_s) / _range_s
+            _body_ratio_s = (_body_top_s - _body_bottom_s) / _range_s
+
+            _is_pin_bar_s = (_lower_shadow_s >= 2 * _body_ratio_s)
+            _is_hammer_s = (_lower_shadow_s >= 0.6) & (_body_ratio_s <= 0.3) & (_upper_shadow_s <= 0.1)
+            _is_engulfing_s = (
+                (_close_s > _open_s) & (_close_s.shift(1) < _open_s.shift(1)) &
+                (_open_s <= _close_s.shift(1)) & (_close_s >= _open_s.shift(1))
+            )
+            confirmation_signal_s = (_is_pin_bar_s | _is_hammer_s | _is_engulfing_s).fillna(False)
+
             is_holding = False
             e_price, m_price, e_date = 0, 0, None
             entry_meta = {}
@@ -643,10 +665,29 @@ if __name__ == "__main__":
                     golden_cross = (d_1 <= sd_1) and (d_0 > sd_0)
 
                     if touch_oversold and golden_cross:  # 検証の結果、売られすぎ条件は有効なため正式にゲートへ戻す
-                        entry_dt = df_d.index[i]
+
+                        # --- 確認パターン待ち：有効な場合、GC成立日から数日以内に
+                        #     ピンバー/ハンマー/陽の包み線のいずれかが出た日を探し、
+                        #     その翌営業日の寄り付きをエントリー日とする ---
+                        confirm_i = i
+                        if REQUIRE_CONFIRMATION_PATTERN:
+                            confirm_i = None
+                            for k in range(0, MAX_CONFIRMATION_WAIT_DAYS + 1):
+                                cand = i + k
+                                if cand >= len(df_d) - 1:  # cand+1（翌日の寄り付き）が存在しない
+                                    break
+                                if bool(confirmation_signal_s.iloc[cand]):
+                                    confirm_i = cand
+                                    break
+                            if confirm_i is None:
+                                continue  # 待機期間内に確認パターンが出なかったので、このシグナルは見送り
+
+                        entry_dt = df_d.index[i]  # シグナル自体の基準日（特徴量はこの日のものを使う）
+                        entry_exec_i = confirm_i  # 実際にエントリーを判定する足（確認パターンが出た日、または即日）
+                        tomorrow_open = float(df_d['Open'].iloc[entry_exec_i + 1])
                         nk_dev = df_nk.loc[entry_dt, 'nk_sma25_dev'] if entry_dt in df_nk.index else np.nan
                         vr_today = float(vol_ratio.iloc[i])
-                        next_weekday = df_d.index[i + 1].weekday()  # 0=月, 1=火 ...
+                        next_weekday = df_d.index[entry_exec_i + 1].weekday()  # 0=月, 1=火 ...（実際の約定日ベース）
 
                         # --- 陰線／前日比終値判定（検証用フラグ） ---
                         open_today = float(df_d['Open'].iloc[i])
@@ -800,9 +841,11 @@ if __name__ == "__main__":
                             is_holding = True
                             e_price = tomorrow_open
                             m_price = tomorrow_open
-                            e_date = df_d.index[i + 1]
+                            e_date = df_d.index[entry_exec_i + 1]
+                            holding_entry_i = entry_exec_i + 1  # 実際にポジションを持ち始める足番号
 
                             entry_meta = {
+                                'confirmation_wait_days': entry_exec_i - i,
                                 'rsi_14': float(rsi_14.iloc[i]),
                                 'volume_ratio': vr_today,
                                 'sma25_dev': float(sma25_dev.iloc[i]),
@@ -864,6 +907,8 @@ if __name__ == "__main__":
                                 'current_week_bullish_so_far': current_week_bullish_so_far,
                             }
                 else:
+                    if i < holding_entry_i:
+                        continue  # 確認パターン待ちの間はまだポジションを持っていないので、決済判定はスキップ
                     m_price = max(m_price, close)
                     reason = None
                     dead_cross = (d_1 >= sd_1) and (d_0 < sd_0) if not (
@@ -967,6 +1012,7 @@ if __name__ == "__main__":
                                 'best_etf_corr': entry_meta.get('best_etf_corr'),
                                 'weekly_candle_bullish': entry_meta.get('weekly_candle_bullish'),
                                 'current_week_bullish_so_far': entry_meta.get('current_week_bullish_so_far'),
+                                'confirmation_wait_days': entry_meta.get('confirmation_wait_days'),
                             })
                         is_holding = False
         except Exception as e:
