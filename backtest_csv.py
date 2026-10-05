@@ -34,8 +34,13 @@ NAIVE_ETF_CORR_THRESHOLD = 0.08  # 業種マッピングで割り当てたETFと
 
 # --- GC確認後、追加のローソク足パターン（ピンバー・ハンマー・陽の包み線のいずれか）が
 #     出るまで待ってからエントリーする機能（検証用） ---
-REQUIRE_CONFIRMATION_PATTERN = True   # Falseにすれば今まで通り即日翌日エントリーに戻せる
-MAX_CONFIRMATION_WAIT_DAYS = 5        # この日数以内に確認パターンが出なければ、そのシグナルは見送り
+REQUIRE_CONFIRMATION_PATTERN = False  # 検証の結果、待っても勝率は改善しなかったため無効（即翌日エントリー）
+MAX_CONFIRMATION_WAIT_DAYS = 5        # 有効にした場合のみ使用：この日数以内に確認パターンが出なければ見送り
+
+# --- ボリンジャーバンド -2σ を明らかに下回っている銘柄（落ちるナイフ）を除外するフィルタ ---
+# bb_percent_b: 0 = -2σ、1 = +2σ、マイナスは -2σ より下。例えば -0.1 にすると「-2σを大きく下回る銘柄は見送り」
+# None = 無効。検証の結果、下回る銘柄の方が勝率はむしろ高かったため、現在は無効。
+BB_PERCENT_B_MIN = None
 
 # --- 既知の暴落期間の除外リスト ---
 # 「日経-5%乖離で買う」は通常の調整局面では機能するが、コロナショックのような
@@ -612,6 +617,24 @@ if __name__ == "__main__":
             sma100_slope = (sma100 - sma100.shift(10)) / sma100.shift(10) * 100
             sma25_rising = (sma25_slope > 0).astype(int)
             sma100_rising = (sma100_slope > 0).astype(int)
+
+            # --- 銘柄ごとの「跳ねやすい乖離率」を過去500日から推定（先読みなし） ---
+            # (1) その銘柄自身の過去500日における、25日線乖離の下位10%水準（＝普段の「行き過ぎ」の深さ）
+            #     shift(1)で当日を含めない
+            sma25_dev_p10_500 = sma25_dev.rolling(window=500, min_periods=250).quantile(0.10).shift(1)
+            sma25_dev_vs_p10 = pd.Series(
+                np.where(sma25_dev_p10_500 < -0.5, sma25_dev / sma25_dev_p10_500, np.nan), index=df_d.index
+            )  # 1以上＝その銘柄の普段の行き過ぎ水準と同じかそれ以上に深く売られている
+
+            # (2) 過去に実際に「5日以内に3%以上跳ねた日」の乖離率の中央値（＝実際に反発した時の乖離率）
+            #     当日以降の5日間の値動きで判定するため、ラベルが確定するまでの6日分をshiftして先読みを防ぐ
+            fwd_max_high5 = df_d['High'].rolling(window=5).max().shift(-5)
+            bounced = (fwd_max_high5 / df_d['Close'] - 1) >= 0.03
+            bounce_dev_masked = sma25_dev.where(bounced & (sma25_dev < 0))
+            bounce_dev_median_500 = bounce_dev_masked.shift(6).rolling(window=500, min_periods=10).median()
+            sma25_dev_vs_bounce = pd.Series(
+                np.where(bounce_dev_median_500 < -0.5, sma25_dev / bounce_dev_median_500, np.nan), index=df_d.index
+            )  # 1以上＝その銘柄が過去に実際に跳ねた時の乖離率と同じかそれ以上に深い
             msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
             weekly_candles = build_weekly_candles(df_d)  # 週足も銘柄ごとに1回だけ作成
 
@@ -836,6 +859,10 @@ if __name__ == "__main__":
                                 continue  # 米国同業種セクターがあまり下げていない銘柄は見送り
                             if naive_etf_corr is None or naive_etf_corr < NAIVE_ETF_CORR_THRESHOLD:
                                 continue  # 業種マッピング先ETFとの相関が弱い銘柄は見送り（シグナルが意味をなさないため）
+                            if BB_PERCENT_B_MIN is not None:
+                                _bb_val = bb_percent_b.iloc[i]
+                                if pd.isna(_bb_val) or _bb_val < BB_PERCENT_B_MIN:
+                                    continue  # -2σを大きく下回る銘柄（落ちるナイフ）は見送り
 
                         if tomorrow_open * 100 <= INITIAL_CASH:
                             is_holding = True
@@ -869,6 +896,10 @@ if __name__ == "__main__":
                                 'sma100_slope': round(float(sma100_slope.iloc[i]), 3) if not pd.isna(sma100_slope.iloc[i]) else None,
                                 'sma25_rising': int(sma25_rising.iloc[i]),
                                 'sma100_rising': int(sma100_rising.iloc[i]),
+                                'sma25_dev_p10_500': round(float(sma25_dev_p10_500.iloc[i]), 3) if not pd.isna(sma25_dev_p10_500.iloc[i]) else None,
+                                'sma25_dev_vs_p10': round(float(sma25_dev_vs_p10.iloc[i]), 3) if not pd.isna(sma25_dev_vs_p10.iloc[i]) else None,
+                                'bounce_dev_median_500': round(float(bounce_dev_median_500.iloc[i]), 3) if not pd.isna(bounce_dev_median_500.iloc[i]) else None,
+                                'sma25_dev_vs_bounce': round(float(sma25_dev_vs_bounce.iloc[i]), 3) if not pd.isna(sma25_dev_vs_bounce.iloc[i]) else None,
                                 'is_hammer': is_hammer,
                                 'is_bullish_engulfing': is_bullish_engulfing,
                                 'is_doji': is_doji,
@@ -976,6 +1007,10 @@ if __name__ == "__main__":
                                 'sma100_slope': entry_meta.get('sma100_slope'),
                                 'sma25_rising': entry_meta.get('sma25_rising', 0),
                                 'sma100_rising': entry_meta.get('sma100_rising', 0),
+                                'sma25_dev_p10_500': entry_meta.get('sma25_dev_p10_500'),
+                                'sma25_dev_vs_p10': entry_meta.get('sma25_dev_vs_p10'),
+                                'bounce_dev_median_500': entry_meta.get('bounce_dev_median_500'),
+                                'sma25_dev_vs_bounce': entry_meta.get('sma25_dev_vs_bounce'),
                                 'is_hammer': entry_meta.get('is_hammer', 0),
                                 'is_bullish_engulfing': entry_meta.get('is_bullish_engulfing', 0),
                                 'is_doji': entry_meta.get('is_doji', 0),
