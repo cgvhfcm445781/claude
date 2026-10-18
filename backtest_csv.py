@@ -21,7 +21,9 @@ MIN_VALUE_LIMIT = 50000000 # 売買代金の下限（5,000万円）
 STOCH_K_PERIOD = 9
 STOCH_D_PERIOD = 3
 STOCH_SD_PERIOD = 3
-OVERSOLD_LEVEL = 20
+# 【変更】週足×売られ過ぎ水準の検証用にデータ収集を広げる（本番は20）。
+# 絞り込みは分析側（analyze_weekly.py）で stoch_min3 列を使って行う。
+OVERSOLD_LEVEL = 50
 
 # --- 追加フィルタ（過去データ分析から導出） ---
 USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
@@ -389,6 +391,47 @@ def build_weekly_candles(df_d):
     return weekly
 
 
+def build_weekly_features(df_d):
+    """
+    【追加】週足の「上昇トレンド」判定用の特徴量を作る。
+      - sma13            : 13週移動平均（約3か月）
+      - sma13_slope      : 13週線の4週前比の傾き(%)
+      - close_above_sma13: 週足終値が13週線より上か（1/0）
+      - sma13_rising     : 13週線が上向きか（1/0）
+      - w_stoch_d        : 週足ストキャス（%D、日足と同じ 9-3 設定）
+    計算は銘柄ごとに1回だけ。参照時は get_weekly_feats_asof() で必ず「確定済み週」だけを使う。
+    """
+    w = df_d[['Open', 'High', 'Low', 'Close']].resample('W-FRI').agg(
+        {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}
+    ).dropna()
+    w['sma13'] = w['Close'].rolling(13).mean()
+    w['sma13_slope'] = (w['sma13'] - w['sma13'].shift(4)) / w['sma13'].shift(4) * 100
+    # 判定不能（NaN）の週は0ではなくNaNのままにする
+    w['close_above_sma13'] = (w['Close'] > w['sma13']).astype(float).where(w['sma13'].notna())
+    w['sma13_rising'] = (w['sma13_slope'] > 0).astype(float).where(w['sma13_slope'].notna())
+    low_min = w['Low'].rolling(9).min()
+    high_max = w['High'].rolling(9).max()
+    fast_k = 100 * (w['Close'] - low_min) / (high_max - low_min + 1e-10)
+    w['w_stoch_d'] = fast_k.rolling(3).mean()
+    return w
+
+
+def get_weekly_feats_asof(weekly_feats, entry_dt):
+    """
+    【追加】entry_dt時点で確定済みの直近の週足特徴量（今週分は未確定なので使わない＝先読みなし）。
+    """
+    monday = entry_dt - pd.Timedelta(days=entry_dt.weekday())
+    done = weekly_feats[weekly_feats.index < monday]
+    return None if len(done) == 0 else done.iloc[-1]
+
+
+def _nn(v, ndigits=3):
+    """NaN/None を None に揃え、数値なら丸めて返す（CSV出力用）"""
+    if v is None or pd.isna(v):
+        return None
+    return round(float(v), ndigits)
+
+
 def get_last_completed_weekly_candle(weekly, entry_dt):
     """
     entry_dt時点で「確定済み」の直近の週足（陽線かどうか）を取得する。
@@ -637,6 +680,7 @@ if __name__ == "__main__":
             )  # 1以上＝その銘柄が過去に実際に跳ねた時の乖離率と同じかそれ以上に深い
             msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
             weekly_candles = build_weekly_candles(df_d)  # 週足も銘柄ごとに1回だけ作成
+            weekly_feats = build_weekly_features(df_d)   # 【追加】週足のトレンド・ストキャス特徴量
 
             # --- 追加のテクニカル指標（証券アプリの左メニューにあった主要指標） ---
             bb_percent_b = calculate_bollinger(df_d['Close'], period=20, num_std=2)
@@ -843,6 +887,11 @@ if __name__ == "__main__":
                         # --- （比較用）今週、月曜からentry_dtまで形成中の週足が陽線か ---
                         current_week_bullish_so_far = get_current_week_candle_so_far(df_d, entry_dt)
 
+                        # --- 【追加】確定済み週足の上昇トレンド特徴量と、日足ストキャスの最小値 ---
+                        wf = get_weekly_feats_asof(weekly_feats, entry_dt)
+                        # ゲート判定（touch_oversold）と同じ3値の最小。水準違いの比較は後からこの列で切り替える
+                        stoch_min3 = float(np.nanmin([d_1, sd_1, d_0]))
+
                         # --- 追加フィルタ判定（分析結果に基づく） ---
                         if USE_ENTRY_FILTERS:
                             if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
@@ -936,6 +985,13 @@ if __name__ == "__main__":
                                 'best_etf_corr': round(best_etf_corr, 3) if best_etf_corr is not None else None,
                                 'weekly_candle_bullish': weekly_candle_bullish,
                                 'current_week_bullish_so_far': current_week_bullish_so_far,
+                                # --- 【追加】週足×ストキャス水準の検証用 ---
+                                'stoch_min3': round(stoch_min3, 2),
+                                'stoch_d_0': round(float(d_0), 2),
+                                'w_close_above_sma13': None if wf is None else _nn(wf['close_above_sma13'], 0),
+                                'w_sma13_rising': None if wf is None else _nn(wf['sma13_rising'], 0),
+                                'w_sma13_slope': None if wf is None else _nn(wf['sma13_slope'], 3),
+                                'w_stoch_d': None if wf is None else _nn(wf['w_stoch_d'], 2),
                             }
                 else:
                     if i < holding_entry_i:
@@ -1048,6 +1104,13 @@ if __name__ == "__main__":
                                 'weekly_candle_bullish': entry_meta.get('weekly_candle_bullish'),
                                 'current_week_bullish_so_far': entry_meta.get('current_week_bullish_so_far'),
                                 'confirmation_wait_days': entry_meta.get('confirmation_wait_days'),
+                                # --- 【追加】週足×ストキャス水準の検証用 ---
+                                'stoch_min3': entry_meta.get('stoch_min3'),
+                                'stoch_d_0': entry_meta.get('stoch_d_0'),
+                                'w_close_above_sma13': entry_meta.get('w_close_above_sma13'),
+                                'w_sma13_rising': entry_meta.get('w_sma13_rising'),
+                                'w_sma13_slope': entry_meta.get('w_sma13_slope'),
+                                'w_stoch_d': entry_meta.get('w_stoch_d'),
                             })
                         is_holding = False
         except Exception as e:
