@@ -1,46 +1,64 @@
-"""
-週足ストキャスGCの「シグナル研究」用データ収集スクリプト。
-
-考え方
-- 日足から週足(W-FRI)を作り、確定済みの週だけでシグナルを判定する（今週の未確定足は使わない）
-- シグナル週の金曜終値で判定 → 翌週の月曜寄り付き(=翌週の最初の営業日の始値)でエントリー
-- ストキャスのパラメータ(k,d,sd)を複数試し、ゲートは広め(GATE_WIDE)で全部記録する
-  → GC水準(gc_level)やその他の条件による絞り込みは analyze_weekly_signals.py 側で行う
-- 結果は「固定期間リターン」と「ルール決済(損切り/トレーリング/デッドクロス/時間切れ)」の両方を記録
-- 銘柄ごとにシグナルを独立に評価する（1銘柄1ポジション制の重複排除はしない。
-  代わりに weeks_since_prev_signal を記録するので、分析側で間引ける）
-"""
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import requests
 import io
-import os
-import time
 import warnings
+import time
+import os
 
+# 警告の抑制
 warnings.simplefilter('ignore', FutureWarning)
 
-# ---------------- 設定 ----------------
-INITIAL_CASH = 400000          # 100株買える上限判定に使う（日足版と同じ）
-USE_CASH_LIMIT = True          # Falseにすると価格帯の制限なしで全銘柄を対象にする
-MIN_PRICE_LIMIT = 1000
-MIN_WEEKLY_VALUE = 250_000_000  # 直近4週の平均週間売買代金（日足版の5,000万円/日 × 5日相当）
+# --- 設定 ---
+INITIAL_CASH = 400000 
+LOSS_CUT_RATE = 0.03       # 3%損切り
+TRAILING_STOP_RATE = 0.02  # 2%トレーリングストップ
+MIN_PRICE_LIMIT = 1000     # 最小株価制限
+MIN_VALUE_LIMIT = 50000000 # 売買代金の下限（5,000万円）
 
-# ストキャスのパラメータ候補 (k期間, d期間, sd期間)。週足なので日足(9,3,3)より短め〜同じを試す
-STOCH_PARAM_GRID = [(5, 3, 3), (9, 3, 3), (14, 3, 3)]
-GATE_WIDE = 60                 # GC前後3値の最小値がこれ以下ならシグナルとして記録（絞り込みは分析側）
+# ストキャスティクス パラメータ
+STOCH_K_PERIOD = 9
+STOCH_D_PERIOD = 3
+STOCH_SD_PERIOD = 3
+OVERSOLD_LEVEL = 20
 
-# 決済ルールの候補: {名前: (損切り率, トレーリング率)}。週足なので日足(3%,2%)より広めにしてある
-EXIT_GRID = {'A': (0.05, 0.04), 'B': (0.08, 0.06), 'C': (0.12, 0.08)}
-MAX_HOLD_WEEKS = 13            # 時間切れ（約3ヶ月）
-FWD_WEEKS = (1, 2, 4, 8)       # 固定期間リターンを記録する週数
+# --- 追加フィルタ（過去データ分析から導出） ---
+USE_ENTRY_FILTERS = True     # Falseにすれば元の条件のみに戻せる
+NIKKEI_DEV_THRESHOLD = 50.0  # 日経平均が25日線からこの%以上下に乖離している日のみエントリー（頻度を優先し実質無効化）
+EXCLUDE_TUESDAY = True        # 火曜エントリーを除外（過去の大サンプル検証で根拠あり、今回の小サンプルでは再現しなかったが証拠不十分なだけと判断し維持）
+MIN_VOLUME_RATIO = 0.5       # 出来高比率がこれ未満（閑散銘柄）は除外
+FUTURES_BASIS_THRESHOLD = 100.0  # 先物ベーシス条件（勝率への寄与が小さく、頻度を優先するため実質無効化）
+US_SECTOR_CHG_THRESHOLD = -1.3  # 対応する米国セクターETFの前日変化率がこれより大きければ見送り（ハードな足切り条件）
+NAIVE_ETF_CORR_THRESHOLD = 0.08  # 業種マッピングで割り当てたETFとの実際の相関がこれ未満なら見送り（相関が弱い＝シグナルが意味をなさない銘柄を除外）
 
+# --- GC確認後、追加のローソク足パターン（ピンバー・ハンマー・陽の包み線のいずれか）が
+#     出るまで待ってからエントリーする機能（検証用） ---
+REQUIRE_CONFIRMATION_PATTERN = False  # 検証の結果、待っても勝率は改善しなかったため無効（即翌日エントリー）
+MAX_CONFIRMATION_WAIT_DAYS = 5        # 有効にした場合のみ使用：この日数以内に確認パターンが出なければ見送り
+
+# --- ボリンジャーバンド -2σ を明らかに下回っている銘柄（落ちるナイフ）を除外するフィルタ ---
+# bb_percent_b: 0 = -2σ、1 = +2σ、マイナスは -2σ より下。例えば -0.1 にすると「-2σを大きく下回る銘柄は見送り」
+# None = 無効。検証の結果、下回る銘柄の方が勝率はむしろ高かったため、現在は無効。
+BB_PERCENT_B_MIN = None
+
+# --- 既知の暴落期間の除外リスト ---
+# 「日経-5%乖離で買う」は通常の調整局面では機能するが、コロナショックのような
+# 急激かつ継続的な暴落では逆効果（下げ止まらず損切り連発）だったため、
+# 過去に判明している大暴落期間はエントリー対象から除外する。
+# 似たような急落が将来起きた場合、ここに期間を手動で追加することを想定。
+CRISIS_PERIODS = [
+    ("2020-02-20", "2020-05-31"),  # コロナショック
+]
+
+# --- ウォークフォワード検証の区切り年 ---
+WALKFORWARD_SPLIT_YEAR = 2025  # この年より前を「学習期間」、以降を「検証期間」として比較
+
+# --- CSV出力設定 ---
 OUTPUT_DIR = "output"
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "weekly_signals.csv")
+OUTPUT_FILE = os.path.join(OUTPUT_DIR, "trade_log.csv")
 
 
-# ---------------- データ取得 ----------------
 def get_jpx_stock_list():
     url = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xlsx"
     headers = {
@@ -49,36 +67,46 @@ def get_jpx_stock_list():
         "Accept": "*/*",
     }
     res = requests.get(url, headers=headers, timeout=30)
-    print(f"[JPX] status_code={res.status_code}, content-length={len(res.content)} bytes")
+
+    # 診断用ログ：常に出力しておく（失敗時の原因特定のため）
+    print(f"[JPX] status_code={res.status_code}, content-type={res.headers.get('Content-Type')}, "
+          f"content-length={len(res.content)} bytes")
+
     if res.status_code != 200:
-        raise RuntimeError(f"JPXへのアクセスに失敗しました (status={res.status_code})")
+        raise RuntimeError(
+            f"JPXへのアクセスに失敗しました (status={res.status_code})。"
+            f"アクセス元IPがブロックされている可能性があります。"
+            f"レスポンス先頭: {res.content[:300]!r}"
+        )
+
     content = res.content
+    # ファイル形式を先頭バイトで判定（xlsxはZIP形式なのでPKで始まる、xlsは別のバイナリシグネチャ）
     is_xlsx = content[:2] == b'PK'
-    df = pd.read_excel(io.BytesIO(content), engine='openpyxl' if is_xlsx else 'xlrd')
-    target_markets = ['プライム（内国株式）', 'スタンダード（内国株式）']
+
+    try:
+        if is_xlsx:
+            df = pd.read_excel(io.BytesIO(content), engine='openpyxl')
+        else:
+            df = pd.read_excel(io.BytesIO(content), engine='xlrd')
+    except Exception as e:
+        raise RuntimeError(
+            f"Excelファイルの解析に失敗しました: {e}\n"
+            f"先頭バイト: {content[:20]!r}\n"
+            f"おそらくJPXからExcelではなくエラーページ(HTML等)が返ってきています。"
+        )
+
+    target_markets = ['プライム（内国株式）', 'スタンダード（内国株式）']  # グロースは検証の結果、成績が明確に劣るため除外
     df = df[df['市場・商品区分'].isin(target_markets)].copy()
-    df['Market'] = df['市場・商品区分'].map({
-        'プライム（内国株式）': 'プライム', 'スタンダード（内国株式）': 'スタンダード'})
+    market_label_map = {
+        'プライム（内国株式）': 'プライム',
+        'スタンダード（内国株式）': 'スタンダード',
+        'グロース（内国株式）': 'グロース',
+    }
+    df['Market'] = df['市場・商品区分'].map(market_label_map)
     df['Ticker'] = df['コード'].astype(str) + ".T"
     return df[['Ticker', '銘柄名', '33業種区分', 'Market']]
 
 
-def clean_daily(df_d):
-    """日足データのクリーニング（日足版バックテストと同じ方針）"""
-    if isinstance(df_d.columns, pd.MultiIndex):
-        df_d.columns = df_d.columns.get_level_values(0)
-    if getattr(df_d.index, 'tz', None) is not None:
-        df_d.index = df_d.index.tz_localize(None)
-    price_cols = ['Open', 'High', 'Low', 'Close']
-    df_d[price_cols] = df_d[price_cols].where(df_d[price_cols] > 0)
-    df_d = df_d.dropna(subset=price_cols)
-    suspicious = df_d['Close'].pct_change().abs() > 0.5
-    if suspicious.any():
-        df_d = df_d[~suspicious]
-    return df_d
-
-
-# ---------------- 指標 ----------------
 def calculate_stochastics(df, k_period=9, d_period=3, sd_period=3):
     low_min = df['Low'].rolling(window=k_period).min()
     high_max = df['High'].rolling(window=k_period).max()
@@ -86,6 +114,176 @@ def calculate_stochastics(df, k_period=9, d_period=3, sd_period=3):
     stoch_d = fast_k.rolling(window=d_period).mean()
     slow_d = stoch_d.rolling(window=sd_period).mean()
     return stoch_d, slow_d
+
+
+def is_crisis_period(dt):
+    """指定した日付が既知の暴落期間に含まれるかを判定"""
+    for start, end in CRISIS_PERIODS:
+        if pd.Timestamp(start) <= dt <= pd.Timestamp(end):
+            return True
+    return False
+
+
+def compute_msb_ob_series(df_d, zigzag_len=9, fib_factor=0.33):
+    """
+    TradingViewインジケータ「Market Structure Break & Order Block」（EmreKb氏, MPL-2.0）の
+    ロジックをできるだけ忠実にPythonへ移植したもの。このバックテストはロングのみのため、
+    強気側（Bullish MSB / Bullish OB）だけを扱う。df_d全体に対して1回だけ計算し、
+    日ごとの系列（pandas Series）として返す。
+
+    - to_up/to_down：直近 zigzag_len 本（当日含む）の高値・安値を更新したか（未来は見ない）
+    - trend：to_up/to_downの切り替わりで反転するZigZagの状態
+    - h1,h0 / l1,l0：直近2つのスイングハイ／スイングロー
+    - market：h0がh1を「fib_factor分のマージンを付けて」上抜けたら強気(1)に転換 → これがMSB
+    - OB：MSBを起こした「安値側のレグ」(h1〜l0の間)の中で、最後の陰線をOB候補とする
+    - OBゾーンは、終値がゾーン下限を割るまで有効とみなす（インジケータのbox無効化条件と同じ）
+    """
+    n = len(df_d)
+    high = df_d['High'].to_numpy(dtype=float)
+    low = df_d['Low'].to_numpy(dtype=float)
+    open_ = df_d['Open'].to_numpy(dtype=float)
+    close = df_d['Close'].to_numpy(dtype=float)
+
+    # 直近zigzag_len本（当日含む）の高値・安値更新判定はrollingで一括計算
+    high_s = pd.Series(high)
+    low_s = pd.Series(low)
+    to_up = (high_s >= high_s.rolling(zigzag_len, min_periods=1).max()).to_numpy()
+    to_down = (low_s <= low_s.rolling(zigzag_len, min_periods=1).min()).to_numpy()
+
+    trend = 1
+    last_to_up_idx = -1
+    last_to_down_idx = -1
+    high_pivots, low_pivots = [], []
+    h0 = h1 = l0 = l1 = None
+    h0i = h1i = l0i = None
+    last_h0_for_market = last_l0_for_market = None
+    market = 1
+    active_ob_low = active_ob_high = None
+    last_msb_bar = None
+
+    msb_confirmed = np.zeros(n, dtype=int)
+    in_ob_zone = np.zeros(n, dtype=int)
+    ob_low_arr = np.full(n, np.nan)
+    ob_high_arr = np.full(n, np.nan)
+    bars_since_msb = np.full(n, np.nan)
+
+    for i in range(n):
+        prev_trend = trend
+        if trend == 1 and to_down[i]:
+            trend = -1
+        elif trend == -1 and to_up[i]:
+            trend = 1
+
+        if to_up[i]:
+            last_to_up_idx = i
+        if to_down[i]:
+            last_to_down_idx = i
+
+        if trend != prev_trend:
+            if trend == 1:
+                start = last_to_up_idx if last_to_up_idx >= 0 else 0
+                seg = low[start:i + 1]
+                low_val = seg.min()
+                low_idx = start + int(seg.argmin())
+                low_pivots.append((low_val, low_idx))
+                if len(low_pivots) >= 2:
+                    l1, l0 = low_pivots[-2][0], low_pivots[-1][0]
+                else:
+                    l0 = low_pivots[-1][0]
+                l0i = low_pivots[-1][1]
+            else:
+                start = last_to_down_idx if last_to_down_idx >= 0 else 0
+                seg = high[start:i + 1]
+                high_val = seg.max()
+                high_idx = start + int(seg.argmax())
+                high_pivots.append((high_val, high_idx))
+                if len(high_pivots) >= 2:
+                    h1, h0 = high_pivots[-2][0], high_pivots[-1][0]
+                    h1i = high_pivots[-2][1]
+                else:
+                    h0 = high_pivots[-1][0]
+                h0i = high_pivots[-1][1]
+
+        if None not in (h0, h1, l0, l1):
+            if last_h0_for_market != h0 and last_l0_for_market != l0:
+                if market == -1 and h0 > h1 and h0 > h1 + abs(h1 - l0) * fib_factor:
+                    market = 1
+                    last_h0_for_market, last_l0_for_market = h0, l0
+                    msb_confirmed[i] = 1
+                    last_msb_bar = i
+                    # OB候補：h1i 〜 l0i（安値側のレグ）の中で最後の陰線
+                    ob_idx = None
+                    if h1i is not None and l0i is not None and h1i <= l0i:
+                        for j in range(h1i, l0i + 1):
+                            if close[j] < open_[j]:
+                                ob_idx = j
+                    if ob_idx is not None:
+                        active_ob_low = float(low[ob_idx])
+                        active_ob_high = float(high[ob_idx])
+                    else:
+                        active_ob_low = active_ob_high = None
+                elif market == 1 and l0 < l1 and l0 < l1 - abs(h0 - l1) * fib_factor:
+                    market = -1
+                    last_h0_for_market, last_l0_for_market = h0, l0
+
+        # OBゾーンの無効化判定（終値がゾーン下限を割ったら消滅、インジケータと同じ挙動）
+        if active_ob_low is not None and close[i] < active_ob_low:
+            active_ob_low = active_ob_high = None
+
+        if active_ob_low is not None:
+            ob_low_arr[i] = active_ob_low
+            ob_high_arr[i] = active_ob_high
+            if low[i] <= active_ob_high and high[i] >= active_ob_low:
+                in_ob_zone[i] = 1
+
+        if last_msb_bar is not None:
+            bars_since_msb[i] = i - last_msb_bar
+
+    idx = df_d.index
+    return {
+        'msb_confirmed': pd.Series(msb_confirmed, index=idx),
+        'in_ob_zone': pd.Series(in_ob_zone, index=idx),
+        'ob_low': pd.Series(ob_low_arr, index=idx),
+        'ob_high': pd.Series(ob_high_arr, index=idx),
+        'bars_since_msb': pd.Series(bars_since_msb, index=idx),
+    }
+
+
+def get_asof(series, dt):
+    """指定日時点で確定している直近の値を取得（未来の値は使わない、日付のズレにも対応）"""
+    if series is None or len(series) == 0:
+        return np.nan
+    pos = series.index.searchsorted(dt, side='right') - 1
+    if pos < 0:
+        return np.nan
+    return series.iloc[pos]
+
+
+def get_asof_with_prev(series, dt):
+    """指定日時点の直近値と、その1つ前の値（前営業日相当）をまとめて取得"""
+    if series is None or len(series) == 0:
+        return np.nan, np.nan
+    pos = series.index.searchsorted(dt, side='right') - 1
+    if pos < 0:
+        return np.nan, np.nan
+    curr = series.iloc[pos]
+    prev = series.iloc[pos - 1] if pos - 1 >= 0 else np.nan
+    return curr, prev
+
+
+# --- 日本の33業種区分 → 米国セクターETF（SPDR Select Sector）の近似対応表 ---
+# 完全に一致する分類ではないため、近いセクターへの大まかな割り当て
+SECTOR_ETF_MAP = {
+    '水産・農林業': 'XLP', '鉱業': 'XLE', '建設業': 'XLI', '食料品': 'XLP',
+    '繊維製品': 'XLY', 'パルプ・紙': 'XLB', '化学': 'XLB', '医薬品': 'XLV',
+    '石油・石炭製品': 'XLE', 'ゴム製品': 'XLY', 'ガラス・土石製品': 'XLB',
+    '鉄鋼': 'XLB', '非鉄金属': 'XLB', '金属製品': 'XLB', '機械': 'XLI',
+    '電気機器': 'XLK', '輸送用機器': 'XLY', '精密機器': 'XLK', 'その他製品': 'XLY',
+    '電気・ガス業': 'XLU', '陸運業': 'XLI', '海運業': 'XLI', '空運業': 'XLI',
+    '倉庫・運輸関連業': 'XLI', '情報・通信業': 'XLC', '卸売業': 'XLI',
+    '小売業': 'XLY', '銀行業': 'XLF', '証券、商品先物取引業': 'XLF',
+    '保険業': 'XLF', 'その他金融業': 'XLF', '不動産業': 'XLRE', 'サービス業': 'XLY',
+}
 
 
 def calculate_rsi(series, period=14):
@@ -96,29 +294,48 @@ def calculate_rsi(series, period=14):
     return 100 - (100 / (1 + rs))
 
 
+def calculate_rci(series, period=9):
+    """RCI（順位相関指数）：価格の順位と時間の順位の相関を-100〜100で表す"""
+    def _rci(window):
+        price_rank = pd.Series(window).rank(ascending=False)  # 値が大きいほど順位1に近い
+        time_rank = np.arange(1, len(window) + 1)  # 直近が1（新しいほど小さい順位）
+        d_sq_sum = ((price_rank.values - time_rank[::-1]) ** 2).sum()
+        n = len(window)
+        return (1 - 6 * d_sq_sum / (n * (n ** 2 - 1))) * 100
+    return series.rolling(window=period).apply(_rci, raw=True)
+
+
 def calculate_bollinger(series, period=20, num_std=2):
+    """ボリンジャーバンド：%b（バンド内でのポジション、0=下限、1=上限）を返す"""
     sma = series.rolling(window=period).mean()
     std = series.rolling(window=period).std()
     upper = sma + num_std * std
     lower = sma - num_std * std
-    return (series - lower) / ((upper - lower) + 1e-10)
+    percent_b = (series - lower) / ((upper - lower) + 1e-10)
+    return percent_b
 
 
 def calculate_macd(series, fast=12, slow=26, signal=9):
+    """MACD：MACDライン、シグナルライン、ヒストグラムを返す"""
     ema_fast = series.ewm(span=fast, adjust=False).mean()
     ema_slow = series.ewm(span=slow, adjust=False).mean()
     macd_line = ema_fast - ema_slow
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
-    return macd_line, signal_line, macd_line - signal_line
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
 
 
 def calculate_dmi_adx(df, period=14):
+    """DMI/ADX：+DI, -DI, ADX（トレンドの強さ）を返す"""
     high, low, close = df['High'], df['Low'], df['Close']
     up_move = high.diff()
     down_move = -low.diff()
     plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
     minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-    tr = pd.concat([high - low, (high - close.shift()).abs(), (low - close.shift()).abs()], axis=1).max(axis=1)
+    tr = pd.concat([
+        high - low, (high - close.shift()).abs(), (low - close.shift()).abs()
+    ], axis=1).max(axis=1)
+
     atr = tr.ewm(alpha=1 / period, adjust=False).mean()
     plus_di = 100 * pd.Series(plus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-10)
     minus_di = 100 * pd.Series(minus_dm, index=df.index).ewm(alpha=1 / period, adjust=False).mean() / (atr + 1e-10)
@@ -127,217 +344,763 @@ def calculate_dmi_adx(df, period=14):
     return plus_di, minus_di, adx
 
 
-# ---------------- 週足の作成 ----------------
-def build_weekly(df_d, today=None):
-    """日足→週足(W-FRI)。まだ終わっていない最新週は除外する（先読み・未確定足の混入防止）"""
-    w = df_d.resample('W-FRI').agg(
-        {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'})
-    w['Value'] = (df_d['Close'] * df_d['Volume']).resample('W-FRI').sum()
-    day_s = pd.Series(df_d.index, index=df_d.index)
-    w['first_day'] = day_s.resample('W-FRI').first()
-    w['last_day'] = day_s.resample('W-FRI').last()
-    w = w.dropna(subset=['Open', 'Close'])
-    today = today if today is not None else pd.Timestamp.today().normalize()
-    if len(w) and w['last_day'].iloc[-1] < w.index[-1] and w.index[-1] >= today:
-        w = w.iloc[:-1]
-    return w
+def calculate_psychological_line(series, period=12):
+    """サイコロジカルライン：直近period日のうち上昇した日の割合(%)"""
+    up_days = (series.diff() > 0).astype(int)
+    return up_days.rolling(window=period).mean() * 100
 
 
-def build_nikkei_features(df_nk_d):
-    """日経平均の週足ベース指標（地合い）"""
-    nk = df_nk_d[['Open', 'High', 'Low', 'Close']].resample('W-FRI').agg(
-        {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}).dropna()
-    out = pd.DataFrame(index=nk.index)
-    for n in (13, 26):
-        sma = nk['Close'].rolling(n).mean()
-        out[f'nk_dev{n}'] = (nk['Close'] - sma) / sma * 100
-    out['nk_ret_1w'] = nk['Close'].pct_change() * 100
-    out['nk_ret_4w'] = nk['Close'].pct_change(4) * 100
-    out['nk_stoch_d'], _ = calculate_stochastics(nk, 9, 3, 3)
-    return out
-
-
-def compute_features(w, nk_feats=None):
-    """週足の各種特徴量を一括計算（すべて、その週の終値時点で確定している値のみ）"""
-    O, H, L, C, V = w['Open'], w['High'], w['Low'], w['Close'], w['Volume']
-    F = pd.DataFrame(index=w.index)
-    F['rsi_14w'] = calculate_rsi(C, 14)
-    _, _, hist = calculate_macd(C)
-    F['macd_hist_pct'] = hist / C * 100
-    for n in (13, 26, 52):
-        sma = C.rolling(n).mean()
-        F[f'sma{n}_dev'] = (C - sma) / sma * 100
-        if n in (13, 26):
-            F[f'sma{n}_slope'] = (sma - sma.shift(4)) / sma.shift(4) * 100
-    F['bb_percent_b'] = calculate_bollinger(C, 20, 2)
-    plus_di, minus_di, adx = calculate_dmi_adx(w, 14)
-    F['adx_14w'] = adx
-    F['di_diff'] = plus_di - minus_di
-    F['volume_ratio_w'] = V / (V.rolling(13).mean() + 1e-10)
-    F['prev_ret_1w'] = C.pct_change() * 100
-    F['prev_ret_4w'] = C.pct_change(4) * 100
-    F['prev_ret_13w'] = C.pct_change(13) * 100
-    F['dist_52w_high'] = (C / H.rolling(52).max() - 1) * 100
-    F['dist_52w_low'] = (C / L.rolling(52).min() - 1) * 100
-    tr = pd.concat([H - L, (H - C.shift()).abs(), (L - C.shift()).abs()], axis=1).max(axis=1)
-    F['atr_pct_14w'] = tr.rolling(14).mean() / C * 100
-    rng = (H - L).clip(lower=1e-6)
-    F['w_is_bull'] = (C > O).astype(int)
-    F['w_lower_shadow'] = (np.minimum(O, C) - L) / rng
-    F['w_body_ratio'] = (np.maximum(O, C) - np.minimum(O, C)) / rng
-    down = (C < C.shift()).astype(int)
-    F['consec_down_weeks'] = down.groupby((down == 0).cumsum()).cumcount()
-    F['up_weeks_last8'] = (C > C.shift()).astype(int).rolling(8).sum()
-    if nk_feats is not None:
-        nkr = nk_feats.reindex(w.index, method='ffill')
-        for col in nk_feats.columns:
-            F[col] = nkr[col]
-    return F
-
-
-# ---------------- 決済シミュレーション ----------------
-def simulate_exit(t, O, C, dead_cross, n, stop, trail, max_hold):
+def calculate_ichimoku(df):
     """
-    t: シグナル週の番号。エントリーは t+1 週の始値。
-    各週の終値で判定し、翌週の始値で決済する（日足版と同じ「終値判定→翌寄り決済」）。
-    戻り値: (リターン%, 保有週数, 理由)。データ末尾までに決済されなければ None（未決済は除外）
+    一目均衡表：転換線・基準線・雲（先行スパンA/B）・遅行スパンを計算する。
+    先行スパンは26日先に描画されるものなので、当日の位置に来るよう26日分shiftしてある
+    （＝当日チャートに表示されている雲は、26日前の転換線・基準線から計算されたもの）。
     """
-    entry = O[t + 1]
-    peak = entry
-    for k in range(t + 1, n - 1):
-        peak = max(peak, C[k])
-        held = k - t
-        reason = None
-        if C[k] <= peak * (1 - trail) and C[k] > entry:
-            reason = 'trail'
-        elif C[k] <= entry * (1 - stop):
-            reason = 'stop'
-        elif dead_cross[k]:
-            reason = 'dc'
-        elif held >= max_hold:
-            reason = 'time'
-        if reason:
-            return (O[k + 1] / entry - 1) * 100, held, reason
-    return None
+    high, low, close = df['High'], df['Low'], df['Close']
+    tenkan = (high.rolling(window=9).max() + low.rolling(window=9).min()) / 2
+    kijun = (high.rolling(window=26).max() + low.rolling(window=26).min()) / 2
+    senkou_a = ((tenkan + kijun) / 2).shift(26)
+    senkou_b = ((high.rolling(window=52).max() + low.rolling(window=52).min()) / 2).shift(26)
+    kumo_top = pd.concat([senkou_a, senkou_b], axis=1).max(axis=1)
+    kumo_bottom = pd.concat([senkou_a, senkou_b], axis=1).min(axis=1)
+
+    # 価格が雲のどの位置にあるか（上抜け=プラス、下抜け=マイナス、雲の中=0、%で正規化）
+    cloud_position = pd.Series(np.where(
+        close > kumo_top, (close - kumo_top) / kumo_top * 100,
+        np.where(close < kumo_bottom, (close - kumo_bottom) / kumo_bottom * 100, 0.0)
+    ), index=df.index)
+
+    tenkan_kijun_diff = (tenkan - kijun) / kijun * 100  # プラス=転換線が基準線より上（強気）
+    cloud_color = np.where(senkou_a > senkou_b, 1, -1)  # 1=陽の雲（強気）, -1=陰の雲（弱気）
+    chikou_signal = np.where(close > close.shift(26), 1, -1)  # 遅行スパンが26日前の株価より上か
+    return cloud_position, tenkan_kijun_diff, pd.Series(cloud_color, index=df.index), pd.Series(chikou_signal, index=df.index)
 
 
-# ---------------- 銘柄ごとの処理 ----------------
-def process_ticker(df_d, meta, nk_feats=None, today=None):
-    w = build_weekly(df_d, today)
-    if len(w) < 60:
-        return []
-    F = compute_features(w, nk_feats)
-    O, H, L, C = (w[c].to_numpy(dtype=float) for c in ['Open', 'High', 'Low', 'Close'])
-    n = len(w)
-    val4 = w['Value'].rolling(4).mean().to_numpy()
-    rows = []
+def build_weekly_candles(df_d):
+    """
+    日足から週足（月〜金、週の終わりは金曜）を作る。
+    週の途中でシグナル判定をする場合は、この関数の結果からさらに
+    「直近の"確定済み"週足」だけを get_last_completed_weekly_candle() で参照すること
+    （今週分はまだ未確定なので絶対に使わない）。
+    """
+    weekly = df_d[['Open', 'High', 'Low', 'Close']].resample('W-FRI').agg(
+        {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'}
+    ).dropna()
+    return weekly
 
-    for (k, d, sdn) in STOCH_PARAM_GRID:
-        sto, slo = calculate_stochastics(w, k, d, sdn)
-        gc = (sto.shift(1) <= slo.shift(1)) & (sto > slo)
-        dc_arr = ((sto.shift(1) >= slo.shift(1)) & (sto < slo)).fillna(False).to_numpy()
-        min3 = pd.concat([sto.shift(1), slo.shift(1), sto], axis=1).min(axis=1)
-        sig = (gc & (min3 <= GATE_WIDE) & sto.notna() & slo.notna()).to_numpy()
-        min4 = sto.rolling(4).min()
-        sto_a, slo_a, min3_a, min4_a = sto.to_numpy(), slo.to_numpy(), min3.to_numpy(), min4.to_numpy()
 
-        prev_t = None
-        for t in np.flatnonzero(sig):
-            if t + 1 >= n:
-                continue  # 翌週がまだ無い（＝最新のシグナル。バックテストでは評価不能）
-            if C[t] < MIN_PRICE_LIMIT or not (val4[t] >= MIN_WEEKLY_VALUE):
-                continue
-            entry = O[t + 1]
-            if not np.isfinite(entry) or entry <= 0:
-                continue
-            if USE_CASH_LIMIT and entry * 100 > INITIAL_CASH:
-                continue
+def get_last_completed_weekly_candle(weekly, entry_dt):
+    """
+    entry_dt時点で「確定済み」の直近の週足（陽線かどうか）を取得する。
+    月〜金いつ判定しても、必ず先週までに確定した週足を参照する
+    （今週分は金曜が来るまで未確定として扱う）ので、曜日によって結果がブレない。
+    """
+    current_week_monday = entry_dt - pd.Timedelta(days=entry_dt.weekday())
+    completed = weekly[weekly.index < current_week_monday]
+    if len(completed) == 0:
+        return None
+    last = completed.iloc[-1]
+    return 1 if last['Close'] > last['Open'] else 0
 
-            row = dict(meta)
-            row.update({
-                'stoch_params': f'{k}-{d}-{sdn}',
-                'signal_week': w.index[t].strftime('%Y-%m-%d'),
-                'entry_date': pd.Timestamp(w['first_day'].iloc[t + 1]).strftime('%Y-%m-%d'),
-                'entry_price': entry,
-                'gc_level': round(float(sto_a[t]), 2),
-                'gc_level_slow': round(float(slo_a[t]), 2),
-                'stoch_min3': round(float(min3_a[t]), 2),
-                'stoch_min4w': round(float(min4_a[t]), 2) if np.isfinite(min4_a[t]) else np.nan,
-                'stoch_gap': round(float(sto_a[t] - slo_a[t]), 2),
-                'stoch_d_chg': round(float(sto_a[t] - sto_a[t - 1]), 2) if t >= 1 else np.nan,
-                'weeks_since_prev_signal': (t - prev_t) if prev_t is not None else np.nan,
-            })
-            for col, val in F.iloc[t].items():
-                row[col] = round(float(val), 4) if pd.notna(val) else np.nan
 
-            # 固定期間リターン（エントリー週の始値 → N週目の終値）
-            for N in FWD_WEEKS:
-                row[f'fwd_ret_{N}w'] = round((C[t + N] / entry - 1) * 100, 3) if t + N < n else np.nan
-            if t + 4 < n:
-                row['fwd_mae_4w'] = round((L[t + 1:t + 5].min() / entry - 1) * 100, 3)
-                row['fwd_mfe_4w'] = round((H[t + 1:t + 5].max() / entry - 1) * 100, 3)
-            else:
-                row['fwd_mae_4w'] = row['fwd_mfe_4w'] = np.nan
+def get_current_week_candle_so_far(df_d, entry_dt):
+    """
+    entry_dt時点で「今週、月曜の始値からentry_dtの終値まで」形成中の週足が陽線かどうかを取得する。
+    木・金など週の後半は、先週の確定済み週足より今週の形成中の足の方が新しい情報を反映している
+    可能性があるため、比較検証用に別途用意する（もちろん未来のデータは一切使わない）。
+    """
+    current_week_monday = entry_dt - pd.Timedelta(days=entry_dt.weekday())
+    week_bars = df_d.loc[(df_d.index >= current_week_monday) & (df_d.index <= entry_dt)]
+    if len(week_bars) == 0:
+        return None
+    week_open = float(week_bars['Open'].iloc[0])
+    week_close = float(week_bars['Close'].iloc[-1])
+    return 1 if week_close > week_open else 0
 
-            # ルール決済（複数の損切り/トレーリング幅）
-            for key, (stop, trail) in EXIT_GRID.items():
-                res = simulate_exit(t, O, C, dc_arr, n, stop, trail, MAX_HOLD_WEEKS)
-                if res is None:
-                    row[f'exit_{key}_ret'] = np.nan
-                    row[f'exit_{key}_weeks'] = np.nan
-                    row[f'exit_{key}_reason'] = None
-                else:
-                    row[f'exit_{key}_ret'] = round(res[0], 3)
-                    row[f'exit_{key}_weeks'] = res[1]
-                    row[f'exit_{key}_reason'] = res[2]
 
-            rows.append(row)
-            prev_t = t
-    return rows
+WEEKLY_CANDLE_SWITCH_WEEKDAY = 3  # 0=月,1=火,2=水,3=木,4=金。この曜日以降は「形成中の今週の足」を使う
+
+
+def get_weekly_candle_signal(df_d, weekly, entry_dt, i, switch_weekday=WEEKLY_CANDLE_SWITCH_WEEKDAY):
+    """
+    月〜水（switch_weekday未満）：まだ今週の情報が少なすぎるので、先週の確定済み週足を使う。
+    木・金（switch_weekday以上）：週の大部分（4〜5日）が固まっているので、
+    今週の月曜始値〜当日終値までの「形成中の週足」の方が新しく意味があると判断し、そちらを使う。
+    戻り値: (陽線なら1・陰線なら0, どちらのモードを使ったか"確定済み"/"形成中")
+    """
+    if entry_dt.weekday() >= switch_weekday:
+        current_week_monday = entry_dt - pd.Timedelta(days=entry_dt.weekday())
+        this_week = df_d[(df_d.index >= current_week_monday) & (df_d.index <= entry_dt)]
+        if len(this_week) == 0:
+            return None, None
+        week_open = float(this_week['Open'].iloc[0])
+        today_close = float(df_d['Close'].iloc[i])
+        return (1 if today_close > week_open else 0), "形成中"
+    else:
+        return get_last_completed_weekly_candle(weekly, entry_dt), "確定済み"
+
+
 
 
 def export_to_csv(df, path=OUTPUT_FILE):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    df.to_csv(path, index=False, encoding="utf-8-sig")
-    print(f"\n✅ CSV出力が完了しました: {os.path.abspath(path)}  行数={len(df)}, 列数={len(df.columns)}")
+    """Pandas DataFrameをCSVへ出力（GitHub Actionsのartifactでも取得しやすい形）"""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        # 文字化け防止のため utf-8-sig（Excelでもそのまま開ける）
+        df.to_csv(path, index=False, encoding="utf-8-sig")
+        print(f"\n✅ CSV出力が完了しました: {os.path.abspath(path)}")
+        print(f"   行数: {len(df)}, 列数: {len(df.columns)}")
+    except Exception as e:
+        print(f"\n❌ CSV出力エラー: {e}")
+        raise
 
 
 if __name__ == "__main__":
-    start = time.time()
+    start_time = time.time()
     stock_list = get_jpx_stock_list()
+    annual_perf = {}
+    trade_log_list = []
+
+    weekday_names = ["月曜", "火曜", "水曜", "木曜", "金曜"]
+    weekday_perf = {name: {'profit': 0, 'trades': 0, 'wins': 0} for name in weekday_names}
+    sector_perf = {}
+    market_perf = {m: {'profit': 0, 'trades': 0, 'wins': 0} for m in ['プライム', 'スタンダード', 'グロース']}
 
     print("日経平均データを取得中...")
     df_nk = yf.download("^N225", period="10y", interval="1d", progress=False, repair=True)
     if isinstance(df_nk.columns, pd.MultiIndex):
         df_nk.columns = df_nk.columns.get_level_values(0)
-    nk_feats = build_nikkei_features(df_nk)
+    nk_sma25 = df_nk['Close'].rolling(window=25).mean()
+    df_nk['nk_sma25_dev'] = (df_nk['Close'] - nk_sma25) / nk_sma25 * 100
 
-    all_rows = []
-    print("週足シグナルの収集を開始...")
-    for idx, r in stock_list.iterrows():
-        meta = {'ticker': r['Ticker'], 'name': r['銘柄名'], 'sector': r['33業種区分'], 'market': r['Market']}
+    print("日経225先物データを取得中...")
+    try:
+        df_fut = yf.download("NIY=F", period="10y", interval="1d", progress=False, repair=True)
+        if isinstance(df_fut.columns, pd.MultiIndex):
+            df_fut.columns = df_fut.columns.get_level_values(0)
+        if df_fut.empty:
+            raise RuntimeError("先物データが空でした")
+        fut_sma25 = df_fut['Close'].rolling(window=25).mean()
+        df_fut['fut_sma25_dev'] = (df_fut['Close'] - fut_sma25) / fut_sma25 * 100
+        fut_dev_series = df_fut['fut_sma25_dev'].sort_index()
+        fut_close_series = df_fut['Close'].sort_index()
+        print(f"  取得成功: {len(df_fut)}件, 期間 {df_fut.index.min().date()} 〜 {df_fut.index.max().date()}")
+    except Exception as e:
+        print(f"  ⚠ 先物データの取得に失敗しました（先物関連の指標はNoneになります）: {e}")
+        fut_dev_series = None
+        fut_close_series = None
+
+    cash_close_series = df_nk['Close'].sort_index()
+
+    print("米国セクターETFデータを取得中...")
+    us_sector_chg_series = {}   # {ETFティッカー: 日次変化率(%)の系列}
+    us_sector_close_series = {}  # {ETFティッカー: 終値の系列}（連続下落日数・累積リターン計算用）
+    for etf in sorted(set(SECTOR_ETF_MAP.values())):
         try:
-            df_d = yf.download(r['Ticker'], period="10y", interval="1d", progress=False, repair=True)
-            if df_d.empty or len(df_d) < 300:
-                continue
-            df_d = clean_daily(df_d)
-            if len(df_d) < 300:
-                continue
-            all_rows.extend(process_ticker(df_d, meta, nk_feats))
+            df_etf = yf.download(etf, period="10y", interval="1d", progress=False, repair=True)
+            if isinstance(df_etf.columns, pd.MultiIndex):
+                df_etf.columns = df_etf.columns.get_level_values(0)
+            if df_etf.empty:
+                raise RuntimeError("空データ")
+            chg = df_etf['Close'].pct_change() * 100
+            us_sector_chg_series[etf] = chg.sort_index()
+            us_sector_close_series[etf] = df_etf['Close'].sort_index()
         except Exception as e:
-            print(f"⚠ {r['Ticker']} でエラー: {e}")
-            continue
-        if (idx + 1) % 400 == 0:
-            print(f"{idx + 1} 銘柄完了... (シグナル累計 {len(all_rows)})")
+            print(f"  ⚠ {etf} の取得に失敗（この業種のUSセクター指標はNoneになります）: {e}")
+            us_sector_chg_series[etf] = None
+            us_sector_close_series[etf] = None
+    print(f"  取得完了: {sum(1 for v in us_sector_chg_series.values() if v is not None)}/{len(us_sector_chg_series)}銘柄")
 
-    df_log = pd.DataFrame(all_rows)
-    if df_log.empty:
-        print("⚠ シグナルが1件も出ませんでした。")
-    else:
+    def find_best_matching_etf(df_d, us_chg_series_dict, naive_etf, min_overlap=100):
+        """
+        この銘柄の日次リターンと、各米国セクターETFの「前営業日比」（us_sector_chgと同じ基準）との
+        相関を計算し、最も相関が強いETFを探す。あわせて、素直な業種マッピング先のETFとの相関も返す
+        （先読みなし：各日について、その日時点で確定しているETF側の値とだけ突き合わせる）。
+        """
+        stock_ret = df_d['Close'].pct_change() * 100
+        dates = df_d.index
+
+        etf_us_vals = {}
+        for etf, series in us_chg_series_dict.items():
+            if series is None:
+                continue
+            # get_asofと同じ「その日時点で確定している直近値」を、reindex+ffillで高速に一括計算
+            etf_us_vals[etf] = series.reindex(series.index.union(dates)).ffill().reindex(dates)
+
+        best_etf, best_corr = None, -2.0
+        naive_corr = None
+        for etf, us_vals in etf_us_vals.items():
+            paired = pd.concat([stock_ret, us_vals], axis=1).dropna()
+            if len(paired) < min_overlap:
+                continue
+            corr = paired.iloc[:, 0].corr(paired.iloc[:, 1])
+            if pd.isna(corr):
+                continue
+            if etf == naive_etf:
+                naive_corr = corr
+            if corr > best_corr:
+                best_etf, best_corr = etf, corr
+
+        return best_etf, (best_corr if best_etf is not None else None), naive_corr
+
+    def us_sector_crash_progress(close_series, dt, n=5):
+        """米国セクターETFの「暴落の進行度」：連続下落日数とn日累積リターンを返す
+        （その時点で確定しているデータのみ使用、先読みなし）"""
+        if close_series is None or len(close_series) == 0:
+            return None, None
+        pos = close_series.index.searchsorted(dt, side='right') - 1
+        if pos < n:
+            return None, None
+        window = close_series.iloc[pos - n + 1:pos + 1]
+        cum_return = (window.iloc[-1] - close_series.iloc[pos - n]) / close_series.iloc[pos - n] * 100
+        consecutive_down = 0
+        for j in range(pos, pos - n, -1):
+            if j - 1 < 0:
+                break
+            if close_series.iloc[j] < close_series.iloc[j - 1]:
+                consecutive_down += 1
+            else:
+                break
+        return consecutive_down, cum_return
+
+    print(f"検証開始...")
+
+    for idx, row in stock_list.iterrows():
+        ticker, name, sector, market = row['Ticker'], row['銘柄名'], row['33業種区分'], row['Market']
+        if pd.isna(sector): sector = "その他"
+        if sector not in sector_perf:
+            sector_perf[sector] = {'profit': 0, 'trades': 0, 'wins': 0}
+
+        try:
+            df_d = yf.download(ticker, period="10y", interval="1d", progress=False, repair=True)
+            if df_d.empty or len(df_d) < 30: continue
+            if isinstance(df_d.columns, pd.MultiIndex): df_d.columns = df_d.columns.get_level_values(0)
+
+            # --- データクリーニング：明らかな異常値を除去 ---
+            # 0以下の価格や欠損はNaN化して除外
+            price_cols = ['Open', 'High', 'Low', 'Close']
+            df_d[price_cols] = df_d[price_cols].where(df_d[price_cols] > 0)
+            df_d = df_d.dropna(subset=price_cols)
+            if len(df_d) < 30: continue
+
+            # 前日比±50%を超える異常な急騰急落は、株式分割等でない限り基本的に起こらないためデータエラーとみなす
+            daily_return = df_d['Close'].pct_change().abs()
+            suspicious = daily_return > 0.5
+            if suspicious.any():
+                # 疑わしい行はスキップ対象として除外（トレード判定・指標計算から外す）
+                df_d = df_d[~suspicious]
+            if len(df_d) < 30: continue
+
+            # --- この銘柄と米国セクターETFとの相関を計算（銘柄ごとに1回だけ） ---
+            naive_etf = SECTOR_ETF_MAP.get(sector)
+            best_matching_etf, best_etf_corr, naive_etf_corr = find_best_matching_etf(
+                df_d, us_sector_chg_series, naive_etf
+            )
+
+            daily_value = df_d['Close'] * df_d['Volume']
+            ma_value_10 = daily_value.rolling(window=10).mean()
+            stoch_d, slow_d = calculate_stochastics(df_d, STOCH_K_PERIOD, STOCH_D_PERIOD, STOCH_SD_PERIOD)
+            rsi_14 = calculate_rsi(df_d['Close'], period=14)
+            vol_ma20 = df_d['Volume'].rolling(window=20).mean()
+            vol_ratio = df_d['Volume'] / (vol_ma20 + 1e-10)
+            sma25 = df_d['Close'].rolling(window=25).mean()
+            sma25_dev = (df_d['Close'] - sma25) / sma25 * 100
+            sma5 = df_d['Close'].rolling(window=5).mean()
+            sma5_dev = (df_d['Close'] - sma5) / sma5 * 100
+            sma100 = df_d['Close'].rolling(window=100).mean()
+            sma100_dev = (df_d['Close'] - sma100) / sma100 * 100
+            # 「支持線として意識されたか」：安値が線の近くまで下げたのに、終値は線より上で戻ったか（2%以内を「近い」とする）
+            touched_sma25_support = ((df_d['Low'] <= sma25 * 1.02) & (df_d['Close'] > sma25)).astype(int)
+            touched_sma100_support = ((df_d['Low'] <= sma100 * 1.02) & (df_d['Close'] > sma100)).astype(int)
+            # 移動平均線自体の傾き（n日前の線の値と比べて、線そのものが上向きか下向きか）
+            sma25_slope = (sma25 - sma25.shift(5)) / sma25.shift(5) * 100
+            sma100_slope = (sma100 - sma100.shift(10)) / sma100.shift(10) * 100
+            sma25_rising = (sma25_slope > 0).astype(int)
+            sma100_rising = (sma100_slope > 0).astype(int)
+
+            # --- 銘柄ごとの「跳ねやすい乖離率」を過去500日から推定（先読みなし） ---
+            # (1) その銘柄自身の過去500日における、25日線乖離の下位10%水準（＝普段の「行き過ぎ」の深さ）
+            #     shift(1)で当日を含めない
+            sma25_dev_p10_500 = sma25_dev.rolling(window=500, min_periods=250).quantile(0.10).shift(1)
+            sma25_dev_vs_p10 = pd.Series(
+                np.where(sma25_dev_p10_500 < -0.5, sma25_dev / sma25_dev_p10_500, np.nan), index=df_d.index
+            )  # 1以上＝その銘柄の普段の行き過ぎ水準と同じかそれ以上に深く売られている
+
+            # (2) 過去に実際に「5日以内に3%以上跳ねた日」の乖離率の中央値（＝実際に反発した時の乖離率）
+            #     当日以降の5日間の値動きで判定するため、ラベルが確定するまでの6日分をshiftして先読みを防ぐ
+            fwd_max_high5 = df_d['High'].rolling(window=5).max().shift(-5)
+            bounced = (fwd_max_high5 / df_d['Close'] - 1) >= 0.03
+            bounce_dev_masked = sma25_dev.where(bounced & (sma25_dev < 0))
+            bounce_dev_median_500 = bounce_dev_masked.shift(6).rolling(window=500, min_periods=10).median()
+            sma25_dev_vs_bounce = pd.Series(
+                np.where(bounce_dev_median_500 < -0.5, sma25_dev / bounce_dev_median_500, np.nan), index=df_d.index
+            )  # 1以上＝その銘柄が過去に実際に跳ねた時の乖離率と同じかそれ以上に深い
+
+            # (3) 「前回」跳ねた時の乖離率：直近で「5日以内に3%以上跳ねた」かつ乖離-3%以下だった日の乖離率
+            #     （中央値ではなく、直近1回分。500日以内のものだけ有効。ラベル確定の6日分shiftで先読み防止）
+            last_bounce_dev = sma25_dev.where(bounced & (sma25_dev <= -3)).shift(6).ffill(limit=500)
+            gap_last_bounce = sma25_dev - last_bounce_dev  # 0付近＝前回跳ねた時と同じ乖離率、マイナス＝それより深い
+            msb_series = compute_msb_ob_series(df_d)  # 銘柄ごとに1回だけ計算（日次ループ内では参照するだけ）
+            weekly_candles = build_weekly_candles(df_d)  # 週足も銘柄ごとに1回だけ作成
+
+            # --- 追加のテクニカル指標（証券アプリの左メニューにあった主要指標） ---
+            bb_percent_b = calculate_bollinger(df_d['Close'], period=20, num_std=2)
+            macd_line, macd_signal, macd_hist = calculate_macd(df_d['Close'])
+            rci_9 = calculate_rci(df_d['Close'], period=9)
+            plus_di, minus_di, adx = calculate_dmi_adx(df_d, period=14)
+            psycho_12 = calculate_psychological_line(df_d['Close'], period=12)
+            volatility_20 = df_d['Close'].pct_change().rolling(window=20).std() * 100  # 標準偏差（ボラティリティ）
+            cloud_position, tenkan_kijun_diff, cloud_color, chikou_signal = calculate_ichimoku(df_d)
+
+            # --- 「エントリー確認パターン」をベクトル化して事前計算（待機ロジック用） ---
+            _open_s, _close_s, _high_s, _low_s = df_d['Open'], df_d['Close'], df_d['High'], df_d['Low']
+            _range_s = (_high_s - _low_s).clip(lower=1e-6)
+            _body_top_s = pd.concat([_open_s, _close_s], axis=1).max(axis=1)
+            _body_bottom_s = pd.concat([_open_s, _close_s], axis=1).min(axis=1)
+            _lower_shadow_s = (_body_bottom_s - _low_s) / _range_s
+            _upper_shadow_s = (_high_s - _body_top_s) / _range_s
+            _body_ratio_s = (_body_top_s - _body_bottom_s) / _range_s
+
+            _is_pin_bar_s = (_lower_shadow_s >= 2 * _body_ratio_s)
+            _is_hammer_s = (_lower_shadow_s >= 0.6) & (_body_ratio_s <= 0.3) & (_upper_shadow_s <= 0.1)
+            _is_engulfing_s = (
+                (_close_s > _open_s) & (_close_s.shift(1) < _open_s.shift(1)) &
+                (_open_s <= _close_s.shift(1)) & (_close_s >= _open_s.shift(1))
+            )
+            confirmation_signal_s = (_is_pin_bar_s | _is_hammer_s | _is_engulfing_s).fillna(False)
+
+            is_holding = False
+            e_price, m_price, e_date = 0, 0, None
+            entry_meta = {}
+
+            for i in range(25, len(df_d) - 1):
+                dt = df_d.index[i]
+                close = float(df_d['Close'].iloc[i])
+                tomorrow_open = float(df_d['Open'].iloc[i + 1])
+                curr_year = dt.year
+
+                if curr_year not in annual_perf:
+                    annual_perf[curr_year] = {'profit': 0, 'trades': 0, 'wins': 0}
+
+                d_0, sd_0 = stoch_d.iloc[i], slow_d.iloc[i]
+                d_1, sd_1 = stoch_d.iloc[i - 1], slow_d.iloc[i - 1]
+
+                if not is_holding:
+                    if close < MIN_PRICE_LIMIT or ma_value_10.iloc[i] < MIN_VALUE_LIMIT: continue
+                    if pd.isna(d_0) or pd.isna(sd_0) or pd.isna(d_1) or pd.isna(sd_1): continue
+
+                    touch_oversold = (d_1 <= OVERSOLD_LEVEL) or (sd_1 <= OVERSOLD_LEVEL) or (d_0 <= OVERSOLD_LEVEL)
+                    golden_cross = (d_1 <= sd_1) and (d_0 > sd_0)
+
+                    if touch_oversold and golden_cross:  # 検証の結果、売られすぎ条件は有効なため正式にゲートへ戻す
+
+                        # --- 確認パターン待ち：有効な場合、GC成立日から数日以内に
+                        #     ピンバー/ハンマー/陽の包み線のいずれかが出た日を探し、
+                        #     その翌営業日の寄り付きをエントリー日とする ---
+                        confirm_i = i
+                        if REQUIRE_CONFIRMATION_PATTERN:
+                            confirm_i = None
+                            for k in range(0, MAX_CONFIRMATION_WAIT_DAYS + 1):
+                                cand = i + k
+                                if cand >= len(df_d) - 1:  # cand+1（翌日の寄り付き）が存在しない
+                                    break
+                                if bool(confirmation_signal_s.iloc[cand]):
+                                    confirm_i = cand
+                                    break
+                            if confirm_i is None:
+                                continue  # 待機期間内に確認パターンが出なかったので、このシグナルは見送り
+
+                        entry_dt = df_d.index[i]  # シグナル自体の基準日（特徴量はこの日のものを使う）
+                        entry_exec_i = confirm_i  # 実際にエントリーを判定する足（確認パターンが出た日、または即日）
+                        tomorrow_open = float(df_d['Open'].iloc[entry_exec_i + 1])
+                        nk_dev = df_nk.loc[entry_dt, 'nk_sma25_dev'] if entry_dt in df_nk.index else np.nan
+                        vr_today = float(vol_ratio.iloc[i])
+                        next_weekday = df_d.index[entry_exec_i + 1].weekday()  # 0=月, 1=火 ...（実際の約定日ベース）
+
+                        # --- 陰線／前日比終値判定（検証用フラグ） ---
+                        open_today = float(df_d['Open'].iloc[i])
+                        close_today = close
+                        close_prev = float(df_d['Close'].iloc[i - 1])
+                        high_today = float(df_d['High'].iloc[i])
+                        low_today = float(df_d['Low'].iloc[i])
+                        is_bearish = 1 if close_today < open_today else 0          # 陰線（始値より終値が低い）
+                        is_close_down = 1 if close_today < close_prev else 0        # 終値が前日より低い
+                        close_chg_prev_day = (close_today - close_prev) / close_prev * 100 if close_prev != 0 else np.nan  # 前日比変化率(%)
+                        sma5_dev_today = float(sma5_dev.iloc[i]) if not pd.isna(sma5_dev.iloc[i]) else np.nan  # 5日移動平均線からの乖離率(%)
+
+                        # --- ローソク足の形状（連続値で記録し、閾値は後から自由に検証） ---
+                        day_range = max(high_today - low_today, 1e-6)
+                        body_top = max(open_today, close_today)
+                        body_bottom = min(open_today, close_today)
+                        lower_shadow_ratio = (body_bottom - low_today) / day_range   # 下ヒゲの割合（0〜1）
+                        upper_shadow_ratio = (high_today - body_top) / day_range     # 上ヒゲの割合（0〜1）
+                        body_ratio = (body_top - body_bottom) / day_range           # 実体の割合（0〜1）
+
+                        # --- 古典的なローソク足パターン（強気の反転サインとして知られるもの） ---
+                        open_prev = float(df_d['Open'].iloc[i - 1])
+                        is_hammer = 1 if (lower_shadow_ratio >= 0.6 and body_ratio <= 0.3 and upper_shadow_ratio <= 0.1) else 0
+                        is_bullish_engulfing = 1 if (
+                            close_today > open_today and close_prev < open_prev and
+                            open_today <= close_prev and close_today >= open_prev
+                        ) else 0
+                        is_doji = 1 if body_ratio <= 0.1 else 0
+                        # 明けの明星：2日前が大陰線、前日が小さい実体（窓を開けて下）、当日が大陽線で
+                        # 2日前の実体の中間より上まで戻す、という3本足パターン
+                        is_morning_star = 0
+                        if i - 2 >= 0:
+                            open_2, close_2 = float(df_d['Open'].iloc[i - 2]), float(df_d['Close'].iloc[i - 2])
+                            high_2, low_2 = float(df_d['High'].iloc[i - 2]), float(df_d['Low'].iloc[i - 2])
+                            range_2 = max(high_2 - low_2, 1e-6)
+                            body_2 = abs(close_2 - open_2) / range_2
+                            open_1, close_1 = open_prev, close_prev
+                            high_1, low_1 = float(df_d['High'].iloc[i - 1]), float(df_d['Low'].iloc[i - 1])
+                            range_1 = max(high_1 - low_1, 1e-6)
+                            body_1 = abs(close_1 - open_1) / range_1
+                            mid_2 = (open_2 + close_2) / 2
+                            if (close_2 < open_2 and body_2 >= 0.5 and          # 2日前：大陰線
+                                    body_1 <= 0.3 and max(open_1, close_1) < close_2 and  # 前日：小さい実体、窓を開けて下
+                                    close_today > open_today and body_ratio >= 0.5 and  # 当日：大陽線
+                                    close_today > mid_2):                       # 2日前の実体の中間より上まで戻す
+                                is_morning_star = 1
+
+                        # --- 過去5日分のローソク足パターン（GC条件とは別の予測材料として検証用） ---
+                        lookback_n = 5
+                        if i - lookback_n >= 0:
+                            hi5 = df_d['High'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            lo5 = df_d['Low'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            op5 = df_d['Open'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            cl5 = df_d['Close'].iloc[i - lookback_n + 1:i + 1].to_numpy(dtype=float)
+                            rng5 = np.maximum(hi5 - lo5, 1e-6)
+                            body_top5 = np.maximum(op5, cl5)
+                            body_bottom5 = np.minimum(op5, cl5)
+
+                            up_days_last5 = int((cl5 > op5).sum())
+                            close_prev5 = float(df_d['Close'].iloc[i - lookback_n])
+                            return_5d = (close_today - close_prev5) / close_prev5 * 100 if close_prev5 != 0 else np.nan
+                            avg_body_ratio_last5 = float(((body_top5 - body_bottom5) / rng5).mean())
+                            avg_lower_shadow_last5 = float(((body_bottom5 - lo5) / rng5).mean())
+
+                            consecutive_down_days = 0
+                            for j in range(i, max(i - lookback_n, -1), -1):
+                                if float(df_d['Close'].iloc[j]) < float(df_d['Close'].iloc[j - 1]):
+                                    consecutive_down_days += 1
+                                else:
+                                    break
+                        else:
+                            up_days_last5 = None
+                            return_5d = None
+                            avg_body_ratio_last5 = None
+                            avg_lower_shadow_last5 = None
+                            consecutive_down_days = None
+
+                        # --- MSB / OB 判定（銘柄ごとに事前計算済みの系列を参照） ---
+                        msb_ob = {
+                            'msb_confirmed': int(msb_series['msb_confirmed'].iloc[i]),
+                            'in_ob_zone': int(msb_series['in_ob_zone'].iloc[i]),
+                            'bars_since_msb': msb_series['bars_since_msb'].iloc[i],
+                        }
+                        # --- 前日の値幅がOBゾーンに触れていたか（前日時点で有効だったゾーンで判定） ---
+                        ob_touched_prev_day = int(msb_series['in_ob_zone'].iloc[i - 1]) if i - 1 >= 0 else 0
+                        # 直近3日（GC前日・前々日・3日前）のいずれかで帯（OBゾーン）に触れていたか
+                        ob_touched_recent3 = 1 if any(
+                            msb_series['in_ob_zone'].iloc[i - k] for k in (1, 2, 3) if i - k >= 0
+                        ) else 0
+
+                        # --- 日経225先物関連指標 ---
+                        fut_dev_at_entry = get_asof(fut_dev_series, entry_dt) if fut_dev_series is not None else np.nan
+                        fut_close_at_entry, fut_close_prev = get_asof_with_prev(fut_close_series, entry_dt) if fut_close_series is not None else (np.nan, np.nan)
+                        cash_close_at_entry = get_asof(cash_close_series, entry_dt)
+                        if pd.isna(fut_close_at_entry) or pd.isna(cash_close_at_entry) or cash_close_at_entry == 0:
+                            futures_basis = np.nan
+                        else:
+                            futures_basis = (fut_close_at_entry - cash_close_at_entry) / cash_close_at_entry * 100
+                        # 先物の「前日比」変化率（一晩でどれだけ動いたか）
+                        if pd.isna(fut_close_at_entry) or pd.isna(fut_close_prev) or fut_close_prev == 0:
+                            futures_overnight_chg = np.nan
+                        else:
+                            futures_overnight_chg = (fut_close_at_entry - fut_close_prev) / fut_close_prev * 100
+
+                        # --- 現物(日経)が、夜間先物の示唆した動きに対してどれだけ乖離したか ---
+                        cash_close_at_entry_v2, cash_close_prev = get_asof_with_prev(cash_close_series, entry_dt)
+                        if pd.isna(cash_close_at_entry_v2) or pd.isna(cash_close_prev) or cash_close_prev == 0:
+                            cash_chg_today = np.nan
+                        else:
+                            cash_chg_today = (cash_close_at_entry_v2 - cash_close_prev) / cash_close_prev * 100
+                        if pd.isna(cash_chg_today) or pd.isna(futures_overnight_chg):
+                            overnight_gap = np.nan
+                        else:
+                            # マイナスに大きい＝現物が先物の示唆以上に下げすぎている（理論上は「買い」のサイン）
+                            overnight_gap = cash_chg_today - futures_overnight_chg
+
+                        # --- 前日の米国同業種セクターETFの値動き ---
+                        us_etf = SECTOR_ETF_MAP.get(sector)
+                        us_series = us_sector_chg_series.get(us_etf) if us_etf else None
+                        us_sector_chg = get_asof(us_series, entry_dt) if us_series is not None else np.nan
+
+                        # --- 米国同業種セクターの「暴落の進行度」（悪化中か改善中かの目安） ---
+                        us_close_series = us_sector_close_series.get(us_etf) if us_etf else None
+                        us_sector_consecutive_down, us_sector_return_5d = us_sector_crash_progress(
+                            us_close_series, entry_dt, n=5
+                        ) if us_close_series is not None else (None, None)
+
+                        # --- 直近の"確定済み"週足が陽線だったか（今週分は未確定なので使わない） ---
+                        weekly_candle_bullish = get_last_completed_weekly_candle(weekly_candles, entry_dt)
+                        # --- （比較用）今週、月曜からentry_dtまで形成中の週足が陽線か ---
+                        current_week_bullish_so_far = get_current_week_candle_so_far(df_d, entry_dt)
+
+                        # --- 追加フィルタ判定（分析結果に基づく） ---
+                        if USE_ENTRY_FILTERS:
+                            if pd.isna(nk_dev) or nk_dev > NIKKEI_DEV_THRESHOLD:
+                                continue  # 日経が十分売り込まれていない日は見送り
+                            if EXCLUDE_TUESDAY and next_weekday == 1:
+                                continue  # 火曜エントリーは見送り
+                            if vr_today < MIN_VOLUME_RATIO:
+                                continue  # 出来高が薄すぎる銘柄は見送り
+                            if is_crisis_period(entry_dt):
+                                continue  # 既知の暴落期間は見送り
+                            if pd.isna(futures_basis) or futures_basis >= FUTURES_BASIS_THRESHOLD:
+                                continue  # 先物ベーシスがプラス（先物が現物より強気）の日は見送り
+                            if pd.isna(us_sector_chg) or us_sector_chg > US_SECTOR_CHG_THRESHOLD:
+                                continue  # 米国同業種セクターがあまり下げていない銘柄は見送り
+                            if naive_etf_corr is None or naive_etf_corr < NAIVE_ETF_CORR_THRESHOLD:
+                                continue  # 業種マッピング先ETFとの相関が弱い銘柄は見送り（シグナルが意味をなさないため）
+                            if BB_PERCENT_B_MIN is not None:
+                                _bb_val = bb_percent_b.iloc[i]
+                                if pd.isna(_bb_val) or _bb_val < BB_PERCENT_B_MIN:
+                                    continue  # -2σを大きく下回る銘柄（落ちるナイフ）は見送り
+
+                        if tomorrow_open * 100 <= INITIAL_CASH:
+                            is_holding = True
+                            e_price = tomorrow_open
+                            m_price = tomorrow_open
+                            e_date = df_d.index[entry_exec_i + 1]
+                            holding_entry_i = entry_exec_i + 1  # 実際にポジションを持ち始める足番号
+
+                            entry_meta = {
+                                'confirmation_wait_days': entry_exec_i - i,
+                                'rsi_14': float(rsi_14.iloc[i]),
+                                'volume_ratio': vr_today,
+                                'sma25_dev': float(sma25_dev.iloc[i]),
+                                'nikkei_sma25_dev': float(nk_dev) if not pd.isna(nk_dev) else None,
+                                'is_bearish': is_bearish,
+                                'is_close_down': is_close_down,
+                                'close_chg_prev_day': round(close_chg_prev_day, 3) if not pd.isna(close_chg_prev_day) else None,
+                                'sma5_dev': round(sma5_dev_today, 3) if not pd.isna(sma5_dev_today) else None,
+                                'lower_shadow_ratio': round(lower_shadow_ratio, 3),
+                                'upper_shadow_ratio': round(upper_shadow_ratio, 3),
+                                'body_ratio': round(body_ratio, 3),
+                                'up_days_last5': up_days_last5,
+                                'consecutive_down_days': consecutive_down_days,
+                                'return_5d': round(return_5d, 3) if return_5d is not None and not pd.isna(return_5d) else None,
+                                'avg_body_ratio_last5': round(avg_body_ratio_last5, 3) if avg_body_ratio_last5 is not None else None,
+                                'avg_lower_shadow_last5': round(avg_lower_shadow_last5, 3) if avg_lower_shadow_last5 is not None else None,
+                                'sma100_dev': round(float(sma100_dev.iloc[i]), 3) if not pd.isna(sma100_dev.iloc[i]) else None,
+                                'touched_sma25_support': int(touched_sma25_support.iloc[i]),
+                                'touched_sma100_support': int(touched_sma100_support.iloc[i]),
+                                'sma25_slope': round(float(sma25_slope.iloc[i]), 3) if not pd.isna(sma25_slope.iloc[i]) else None,
+                                'sma100_slope': round(float(sma100_slope.iloc[i]), 3) if not pd.isna(sma100_slope.iloc[i]) else None,
+                                'sma25_rising': int(sma25_rising.iloc[i]),
+                                'sma100_rising': int(sma100_rising.iloc[i]),
+                                'sma25_dev_p10_500': round(float(sma25_dev_p10_500.iloc[i]), 3) if not pd.isna(sma25_dev_p10_500.iloc[i]) else None,
+                                'sma25_dev_vs_p10': round(float(sma25_dev_vs_p10.iloc[i]), 3) if not pd.isna(sma25_dev_vs_p10.iloc[i]) else None,
+                                'bounce_dev_median_500': round(float(bounce_dev_median_500.iloc[i]), 3) if not pd.isna(bounce_dev_median_500.iloc[i]) else None,
+                                'sma25_dev_vs_bounce': round(float(sma25_dev_vs_bounce.iloc[i]), 3) if not pd.isna(sma25_dev_vs_bounce.iloc[i]) else None,
+                                'last_bounce_dev': round(float(last_bounce_dev.iloc[i]), 3) if not pd.isna(last_bounce_dev.iloc[i]) else None,
+                                'gap_last_bounce': round(float(gap_last_bounce.iloc[i]), 3) if not pd.isna(gap_last_bounce.iloc[i]) else None,
+                                'is_hammer': is_hammer,
+                                'is_bullish_engulfing': is_bullish_engulfing,
+                                'is_doji': is_doji,
+                                'is_morning_star': is_morning_star,
+                                'bb_percent_b': round(float(bb_percent_b.iloc[i]), 3) if not pd.isna(bb_percent_b.iloc[i]) else None,
+                                'macd_hist': round(float(macd_hist.iloc[i]), 4) if not pd.isna(macd_hist.iloc[i]) else None,
+                                'rci_9': round(float(rci_9.iloc[i]), 2) if not pd.isna(rci_9.iloc[i]) else None,
+                                'plus_di': round(float(plus_di.iloc[i]), 2) if not pd.isna(plus_di.iloc[i]) else None,
+                                'minus_di': round(float(minus_di.iloc[i]), 2) if not pd.isna(minus_di.iloc[i]) else None,
+                                'adx': round(float(adx.iloc[i]), 2) if not pd.isna(adx.iloc[i]) else None,
+                                'psycho_12': round(float(psycho_12.iloc[i]), 2) if not pd.isna(psycho_12.iloc[i]) else None,
+                                'volatility_20': round(float(volatility_20.iloc[i]), 3) if not pd.isna(volatility_20.iloc[i]) else None,
+                                'ichimoku_cloud_position': round(float(cloud_position.iloc[i]), 3) if not pd.isna(cloud_position.iloc[i]) else None,
+                                'ichimoku_tenkan_kijun_diff': round(float(tenkan_kijun_diff.iloc[i]), 3) if not pd.isna(tenkan_kijun_diff.iloc[i]) else None,
+                                'ichimoku_cloud_color': int(cloud_color.iloc[i]) if not pd.isna(cloud_color.iloc[i]) else None,
+                                'ichimoku_chikou_signal': int(chikou_signal.iloc[i]) if not pd.isna(chikou_signal.iloc[i]) else None,
+                                'msb_confirmed': msb_ob['msb_confirmed'],
+                                'in_ob_zone': msb_ob['in_ob_zone'],
+                                'bars_since_msb': msb_ob['bars_since_msb'],
+                                'ob_touched_prev_day': ob_touched_prev_day,
+                                'ob_touched_recent3': ob_touched_recent3,
+                                'touch_oversold': 1 if touch_oversold else 0,
+                                'futures_sma25_dev': float(fut_dev_at_entry) if not pd.isna(fut_dev_at_entry) else None,
+                                'futures_basis': float(futures_basis) if not pd.isna(futures_basis) else None,
+                                'futures_overnight_chg': float(futures_overnight_chg) if not pd.isna(futures_overnight_chg) else None,
+                                'cash_chg_today': float(cash_chg_today) if not pd.isna(cash_chg_today) else None,
+                                'overnight_gap': float(overnight_gap) if not pd.isna(overnight_gap) else None,
+                                'us_sector_chg': float(us_sector_chg) if not pd.isna(us_sector_chg) else None,
+                                'us_sector_consecutive_down': us_sector_consecutive_down,
+                                'us_sector_return_5d': round(us_sector_return_5d, 3) if us_sector_return_5d is not None else None,
+                                'naive_etf': naive_etf,
+                                'naive_etf_corr': round(naive_etf_corr, 3) if naive_etf_corr is not None else None,
+                                'best_matching_etf': best_matching_etf,
+                                'best_etf_corr': round(best_etf_corr, 3) if best_etf_corr is not None else None,
+                                'weekly_candle_bullish': weekly_candle_bullish,
+                                'current_week_bullish_so_far': current_week_bullish_so_far,
+                            }
+                else:
+                    if i < holding_entry_i:
+                        continue  # 確認パターン待ちの間はまだポジションを持っていないので、決済判定はスキップ
+                    m_price = max(m_price, close)
+                    reason = None
+                    dead_cross = (d_1 >= sd_1) and (d_0 < sd_0) if not (
+                                pd.isna(d_0) or pd.isna(sd_0) or pd.isna(d_1) or pd.isna(sd_1)) else False
+
+                    if close <= m_price * (1 - TRAILING_STOP_RATE) and close > e_price:
+                        reason = "トレリ"
+                    elif close <= e_price * (1 - LOSS_CUT_RATE):
+                        reason = "損切り"
+                    elif dead_cross:
+                        reason = "デッドC"
+
+                    if reason:
+                        exit_dt = df_d.index[i + 1]
+                        profit = (float(df_d['Open'].iloc[i + 1]) - e_price) * 100
+
+                        annual_perf[curr_year]['profit'] += profit
+                        annual_perf[curr_year]['trades'] += 1
+                        if profit > 0: annual_perf[curr_year]['wins'] += 1
+
+                        w_idx_e = e_date.weekday()
+                        if w_idx_e < 5:
+                            weekday_perf[weekday_names[w_idx_e]]['profit'] += profit
+                            weekday_perf[weekday_names[w_idx_e]]['trades'] += 1
+                            if profit > 0: weekday_perf[weekday_names[w_idx_e]]['wins'] += 1
+
+                        sector_perf[sector]['profit'] += profit
+                        sector_perf[sector]['trades'] += 1
+                        if profit > 0: sector_perf[sector]['wins'] += 1
+
+                        if market in market_perf:
+                            market_perf[market]['profit'] += profit
+                            market_perf[market]['trades'] += 1
+                            if profit > 0: market_perf[market]['wins'] += 1
+
+                        if True:  # ダウンロードした全期間を対象にする（年の制限を撤廃）
+                            trade_log_list.append({
+                                'ticker': ticker, 'name': name, 'sector': sector, 'market': market,
+                                'entry': e_date.strftime('%Y-%m-%d'),
+                                'exit': exit_dt.strftime('%Y-%m-%d'),
+                                'entry_price': e_price,
+                                'profit': profit, 'reason': reason,
+                                'wday': weekday_names[w_idx_e],
+                                'rsi_14': round(entry_meta.get('rsi_14', 0), 2),
+                                'volume_ratio': round(entry_meta.get('volume_ratio', 0), 2),
+                                'sma25_dev': round(entry_meta.get('sma25_dev', 0), 2),
+                                'nikkei_sma25_dev': round(entry_meta.get('nikkei_sma25_dev', 0), 2) if entry_meta.get(
+                                    'nikkei_sma25_dev') is not None else None,
+                                'is_bearish': entry_meta.get('is_bearish', 0),
+                                'is_close_down': entry_meta.get('is_close_down', 0),
+                                'close_chg_prev_day': entry_meta.get('close_chg_prev_day'),
+                                'sma5_dev': entry_meta.get('sma5_dev'),
+                                'lower_shadow_ratio': entry_meta.get('lower_shadow_ratio', 0),
+                                'upper_shadow_ratio': entry_meta.get('upper_shadow_ratio', 0),
+                                'body_ratio': entry_meta.get('body_ratio', 0),
+                                'up_days_last5': entry_meta.get('up_days_last5'),
+                                'consecutive_down_days': entry_meta.get('consecutive_down_days'),
+                                'return_5d': entry_meta.get('return_5d'),
+                                'avg_body_ratio_last5': entry_meta.get('avg_body_ratio_last5'),
+                                'avg_lower_shadow_last5': entry_meta.get('avg_lower_shadow_last5'),
+                                'sma100_dev': entry_meta.get('sma100_dev'),
+                                'touched_sma25_support': entry_meta.get('touched_sma25_support', 0),
+                                'touched_sma100_support': entry_meta.get('touched_sma100_support', 0),
+                                'sma25_slope': entry_meta.get('sma25_slope'),
+                                'sma100_slope': entry_meta.get('sma100_slope'),
+                                'sma25_rising': entry_meta.get('sma25_rising', 0),
+                                'sma100_rising': entry_meta.get('sma100_rising', 0),
+                                'sma25_dev_p10_500': entry_meta.get('sma25_dev_p10_500'),
+                                'sma25_dev_vs_p10': entry_meta.get('sma25_dev_vs_p10'),
+                                'bounce_dev_median_500': entry_meta.get('bounce_dev_median_500'),
+                                'sma25_dev_vs_bounce': entry_meta.get('sma25_dev_vs_bounce'),
+                                'last_bounce_dev': entry_meta.get('last_bounce_dev'),
+                                'gap_last_bounce': entry_meta.get('gap_last_bounce'),
+                                'is_hammer': entry_meta.get('is_hammer', 0),
+                                'is_bullish_engulfing': entry_meta.get('is_bullish_engulfing', 0),
+                                'is_doji': entry_meta.get('is_doji', 0),
+                                'is_morning_star': entry_meta.get('is_morning_star', 0),
+                                'bb_percent_b': entry_meta.get('bb_percent_b'),
+                                'macd_hist': entry_meta.get('macd_hist'),
+                                'rci_9': entry_meta.get('rci_9'),
+                                'plus_di': entry_meta.get('plus_di'),
+                                'minus_di': entry_meta.get('minus_di'),
+                                'adx': entry_meta.get('adx'),
+                                'psycho_12': entry_meta.get('psycho_12'),
+                                'volatility_20': entry_meta.get('volatility_20'),
+                                'ichimoku_cloud_position': entry_meta.get('ichimoku_cloud_position'),
+                                'ichimoku_tenkan_kijun_diff': entry_meta.get('ichimoku_tenkan_kijun_diff'),
+                                'ichimoku_cloud_color': entry_meta.get('ichimoku_cloud_color'),
+                                'ichimoku_chikou_signal': entry_meta.get('ichimoku_chikou_signal'),
+                                'msb_confirmed': entry_meta.get('msb_confirmed', 0),
+                                'in_ob_zone': entry_meta.get('in_ob_zone', 0),
+                                'bars_since_msb': entry_meta.get('bars_since_msb'),
+                                'ob_touched_prev_day': entry_meta.get('ob_touched_prev_day', 0),
+                                'ob_touched_recent3': entry_meta.get('ob_touched_recent3', 0),
+                                'touch_oversold': entry_meta.get('touch_oversold', 0),
+                                'futures_sma25_dev': round(entry_meta['futures_sma25_dev'], 2) if entry_meta.get('futures_sma25_dev') is not None else None,
+                                'futures_basis': round(entry_meta['futures_basis'], 3) if entry_meta.get('futures_basis') is not None else None,
+                                'futures_overnight_chg': round(entry_meta['futures_overnight_chg'], 3) if entry_meta.get('futures_overnight_chg') is not None else None,
+                                'cash_chg_today': round(entry_meta['cash_chg_today'], 3) if entry_meta.get('cash_chg_today') is not None else None,
+                                'overnight_gap': round(entry_meta['overnight_gap'], 3) if entry_meta.get('overnight_gap') is not None else None,
+                                'us_sector_chg': round(entry_meta['us_sector_chg'], 3) if entry_meta.get('us_sector_chg') is not None else None,
+                                'us_sector_consecutive_down': entry_meta.get('us_sector_consecutive_down'),
+                                'us_sector_return_5d': entry_meta.get('us_sector_return_5d'),
+                                'naive_etf': entry_meta.get('naive_etf'),
+                                'naive_etf_corr': entry_meta.get('naive_etf_corr'),
+                                'best_matching_etf': entry_meta.get('best_matching_etf'),
+                                'best_etf_corr': entry_meta.get('best_etf_corr'),
+                                'weekly_candle_bullish': entry_meta.get('weekly_candle_bullish'),
+                                'current_week_bullish_so_far': entry_meta.get('current_week_bullish_so_far'),
+                                'confirmation_wait_days': entry_meta.get('confirmation_wait_days'),
+                            })
+                        is_holding = False
+        except Exception as e:
+            print(f"⚠ {ticker} でエラー: {e}")
+            continue
+
+        if (idx + 1) % 400 == 0: print(f"{idx + 1} 銘柄完了...")
+
+    # --- CSV出力実行 ---
+    df_log = pd.DataFrame(trade_log_list)
+    if not df_log.empty:
+        df_log['entry'] = pd.to_datetime(df_log['entry']).dt.strftime('%Y-%m-%d')
+        df_log['exit'] = pd.to_datetime(df_log['exit']).dt.strftime('%Y-%m-%d')
+        df_log['holding_days'] = (pd.to_datetime(df_log['exit']) - pd.to_datetime(df_log['entry'])).dt.days
+        df_log['is_win'] = df_log['profit'].apply(lambda x: 1 if x > 0 else 0)
+
         export_to_csv(df_log)
-        # 簡易サマリ（詳細な分析は analyze_weekly_signals.py で）
-        for p, g in df_log.groupby('stoch_params'):
-            gg = g.dropna(subset=['exit_B_ret'])
-            print(f"  params={p}: シグナル{len(g)}件, 決済済み{len(gg)}件, "
-                  f"決済B 勝率={(gg['exit_B_ret'] > 0).mean() * 100:.1f}%, 平均={gg['exit_B_ret'].mean():.2f}%")
-    print(f"\n総実行時間: {time.time() - start:.1f}秒")
+
+        # --- ウォークフォワード検証：学習期間 vs 検証期間で成績を比較 ---
+        df_log['entry_year'] = pd.to_datetime(df_log['entry']).dt.year
+        train = df_log[df_log['entry_year'] < WALKFORWARD_SPLIT_YEAR]
+        test = df_log[df_log['entry_year'] >= WALKFORWARD_SPLIT_YEAR]
+
+        def _summary(g, label):
+            if len(g) == 0:
+                print(f"  {label}: トレードなし")
+                return
+            win_rate = g['is_win'].mean() * 100
+            avg_profit = g['profit'].mean()
+            total_profit = g['profit'].sum()
+            print(f"  {label}: 件数={len(g)}, 勝率={win_rate:.1f}%, "
+                  f"平均損益={avg_profit:,.0f}円, 合計損益={total_profit:,.0f}円")
+
+        print(f"\n=== ウォークフォワード検証（フィルタ適用: {USE_ENTRY_FILTERS}） ===")
+        print(f"条件: 日経25日線乖離 <= {NIKKEI_DEV_THRESHOLD}%, "
+              f"火曜除外={EXCLUDE_TUESDAY}, 出来高比率 >= {MIN_VOLUME_RATIO}, "
+              f"先物ベーシス < {FUTURES_BASIS_THRESHOLD}, 米国同業種ETF前日比 <= {US_SECTOR_CHG_THRESHOLD}%, "
+              f"業種ETF相関 >= {NAIVE_ETF_CORR_THRESHOLD}")
+        _summary(train, f"学習期間（〜{WALKFORWARD_SPLIT_YEAR - 1}年）")
+        _summary(test, f"検証期間（{WALKFORWARD_SPLIT_YEAR}年〜、未知データ）")
+        print("学習期間と検証期間で勝率・平均損益が大きく変わらなければ、条件が過去データへの")
+        print("過剰最適化ではなく、ある程度将来にも通用する可能性が高いと判断できます。")
+    else:
+        print("\n⚠ トレードが1件も発生しませんでした。CSVは出力されません。")
+        print("   （フィルタ条件が厳しすぎる可能性があります。USE_ENTRY_FILTERS = False で確認できます）")
+
+    print(f"\n総実行時間: {time.time() - start_time:.1f}秒")
