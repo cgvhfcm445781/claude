@@ -1,4 +1,4 @@
-name: Stock Backtest
+name: Weekly Stock Backtest
 
 on:
   workflow_dispatch:   # GitHubアプリの「Run workflow」ボタンから手動実行できるようにする
