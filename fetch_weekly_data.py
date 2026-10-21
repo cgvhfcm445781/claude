@@ -21,7 +21,7 @@ from Weekly_backtest import get_jpx_stock_list, clean_daily, build_weekly
 warnings.simplefilter('ignore', FutureWarning)
 
 DATA_DIR = "data"
-PERIOD = "10y"
+PERIOD = "20y"   # 2008年(リーマンショック)のような長い下落局面も検証に含めるため
 BATCH = 50
 N_SHARDS = 4   # 1ファイルあたりのサイズをGitHubの上限(100MB)より十分小さくするため分割
 

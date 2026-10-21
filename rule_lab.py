@@ -202,6 +202,43 @@ def portfolio(tr, df, max_pos=10, score=None):
     return p, eq
 
 
+def portfolio_mtm(tr, df, max_pos=5, score=None, idle=None):
+    """
+    週次で時価評価するポートフォリオ。資産を max_pos 枠に等分し、空いている枠は
+    idle（週次リターンのSeries、例: TOPIX ETF）で運用する。None なら現金。
+    戻り値: (採用トレード, 資産曲線, 個別株に投資していた割合の週次Series)
+    """
+    weeks = np.sort(df['week'].unique())
+    O, C = df['Open'].to_numpy(), df['Close'].to_numpy()
+    wk_arr = df['week'].to_numpy()
+    t = tr.copy()
+    t['ent_w'] = wk_arr[t['ent']]
+    t['ex_w'] = wk_arr[t['ex']]
+    t['score'] = df[score].to_numpy()[t['sig']] if score else 0
+    t = t.sort_values(['ent_w', 'score'], ascending=[True, False])
+    open_until, taken = [], []
+    for w, grp in t.groupby('ent_w', sort=True):
+        open_until = [x for x in open_until if x > w]
+        free = max_pos - len(open_until)
+        if free > 0:
+            pick = grp.head(free)
+            taken.append(pick)
+            open_until += list(pick['ex_w'])
+    p = pd.concat(taken) if taken else t.iloc[:0]
+    contrib = pd.Series(0.0, index=weeks)   # 個別株の週次リターン寄与（枠あたり）
+    used = pd.Series(0.0, index=weeks)      # 使用中の枠数
+    for e, x, entry, px in zip(p['ent'], p['ex'], p['entry'], p['exit']):
+        prev = entry
+        for k in range(e, x + 1):
+            cur = px * (1 - COST) if k == x else C[k]
+            contrib[wk_arr[k]] += cur / prev - 1
+            used[wk_arr[k]] += 1
+            prev = cur
+    idle_r = idle.reindex(weeks).fillna(0) if idle is not None else 0
+    port_r = (contrib + (max_pos - used).clip(lower=0) * idle_r) / max_pos
+    return p, (1 + port_r).cumprod(), used / max_pos
+
+
 def perf(eq):
     yrs = (eq.index[-1] - eq.index[0]).days / 365.25
     cagr = eq.iloc[-1] ** (1 / yrs) - 1
