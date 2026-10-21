@@ -1,0 +1,37 @@
+name: Fetch Weekly Data
+
+on:
+  workflow_dispatch:
+  push:   # データ取得スクリプトを更新したら、そのブランチで自動実行する
+    paths:
+      - fetch_weekly_data.py
+      - .github/workflows/fetch_weekly_data.yml
+
+permissions:
+  contents: write   # 取得したデータをリポジトリにコミットするため
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy pyarrow
+
+      - name: 週足データを取得
+        run: python fetch_weekly_data.py
+
+      - name: データをコミット
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add data/
+          git diff --staged --quiet && echo "変更なし" || git commit -m "週足データを更新 $(date +'%Y-%m-%d %H:%M')"
+          git push origin HEAD:${GITHUB_REF_NAME}
