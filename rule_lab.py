@@ -19,6 +19,7 @@ DATA_DIR = 'data'
 COST = 0.002                    # 往復0.2%（手数料＋スリッページの目安）
 MIN_WEEKLY_VALUE = 250_000_000  # 直近4週平均の週間売買代金
 PRICE_MIN, PRICE_MAX = 1000, 4000   # 実際の株価（INITIAL_CASH 40万円で100株買える範囲）
+MARKET_SYMBOL = '^N225'          # 地合い判定に使う指数（1306.Tは2009年以降しかないため日経平均）
 PERIODS = [('探索', None, '2022-01-01'), ('検証', '2022-01-01', '2024-01-01'), ('テスト', '2024-01-01', None)]
 
 
@@ -78,9 +79,9 @@ def add_features(df):
     feats = df.groupby('ticker', group_keys=False)[['Open', 'High', 'Low', 'Close', 'Volume', 'Value']].apply(_per_ticker)
     df = pd.concat([df, feats], axis=1)
     df['raw_price'] = df['Close'] * df['split_factor']
-    # 地合い（TOPIX連動ETF 1306）
+    # 地合い（MARKET_SYMBOL の週足）
     mk = pd.read_parquet(os.path.join(DATA_DIR, 'market_weekly.parquet'))
-    tp = mk[mk['symbol'] == '1306.T'].set_index('week')['Close'].astype(float)
+    tp = mk[mk['symbol'] == MARKET_SYMBOL].set_index('week')['Close'].astype(float)
     m = pd.DataFrame({'mk_dev26': (tp / tp.rolling(26).mean() - 1) * 100,
                       'mk_slope26': (tp.rolling(26).mean() / tp.rolling(26).mean().shift(4) - 1) * 100,
                       'mk_ret4': (tp / tp.shift(4) - 1) * 100})

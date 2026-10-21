@@ -74,7 +74,13 @@ def main():
                 print(f"⚠ batch {i} 失敗 ({e})、再試行 {attempt + 1}")
                 time.sleep(10)
         else:
-            continue
+            got = {}
+        # 一括取得で欠けた銘柄は1銘柄ずつ取り直す（20年分の一括取得では3割ほど欠けることがあった）
+        for t in [t for t in batch if t not in got]:
+            try:
+                got.update(download_batch([t]))
+            except Exception as e:
+                print(f"⚠ {t}: 個別取得も失敗 ({e})")
         for t, d in got.items():
             try:
                 w = to_weekly(d)
