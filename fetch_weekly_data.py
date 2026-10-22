@@ -10,6 +10,7 @@
 - market_weekly.parquet : 日経平均(^N225) と TOPIX連動ETF(1306.T) の週足
 - meta.parquet : ticker, name, sector, market
 """
+import glob
 import os
 import time
 import warnings
@@ -23,6 +24,8 @@ warnings.simplefilter('ignore', FutureWarning)
 DATA_DIR = "data"
 PERIOD = "20y"   # 2008年(リーマンショック)のような長い下落局面も検証に含めるため
 BATCH = 50
+SLEEP_SEC = 2  # アクセス制限を避けるためのバッチ間の待ち時間
+MIN_KEEP_RATIO = 0.9  # 取得できた銘柄数が既存データのこの割合未満なら上書きしない
 N_SHARDS = 4   # 1ファイルあたりのサイズをGitHubの上限(100MB)より十分小さくするため分割
 
 
@@ -75,12 +78,16 @@ def main():
                 time.sleep(10)
         else:
             got = {}
-        # 一括取得で欠けた銘柄は1銘柄ずつ取り直す（20年分の一括取得では3割ほど欠けることがあった）
-        for t in [t for t in batch if t not in got]:
+        # 一括取得で欠けた銘柄は少し待ってからまとめて1回だけ取り直す
+        # （1銘柄ずつ取り直すとアクセス制限にかかり、かえって欠けが増えた）
+        missing = [t for t in batch if t not in got]
+        if missing:
+            time.sleep(SLEEP_SEC * 3)
             try:
-                got.update(download_batch([t]))
+                got.update(download_batch(missing))
             except Exception as e:
-                print(f"⚠ {t}: 個別取得も失敗 ({e})")
+                print(f"⚠ 再取得失敗 ({e})")
+        time.sleep(SLEEP_SEC)
         for t, d in got.items():
             try:
                 w = to_weekly(d)
@@ -91,6 +98,12 @@ def main():
         print(f"{min(i + BATCH, len(tickers))}/{len(tickers)} 銘柄 ({time.time() - start:.0f}秒)")
 
     df = pd.concat(frames, ignore_index=True)
+    old_files = glob.glob(os.path.join(DATA_DIR, 'weekly_prices_*.parquet'))
+    if old_files:
+        n_old = pd.concat([pd.read_parquet(f, columns=['ticker']) for f in old_files])['ticker'].nunique()
+        if df['ticker'].nunique() < n_old * MIN_KEEP_RATIO:
+            raise SystemExit(f"⚠ 取得できた銘柄が {df['ticker'].nunique()} と既存の {n_old} より大幅に少ないため、"
+                             "データを上書きせずに終了します（アクセス制限の可能性）")
     for c in ['Open', 'High', 'Low', 'Close', 'split_factor']:
         df[c] = df[c].astype('float32')
     df['Volume'] = df['Volume'].astype('float64')

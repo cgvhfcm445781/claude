@@ -1,11 +1,7 @@
 name: Fetch Weekly Data
 
 on:
-  workflow_dispatch:
-  push:   # データ取得スクリプトを更新したら、そのブランチで自動実行する
-    paths:
-      - fetch_weekly_data.py
-      - .github/workflows/fetch_weekly_data.yml
+  workflow_dispatch:   # GitHubの「Run workflow」ボタンから手動実行
 
 permissions:
   contents: write   # 取得したデータをリポジトリにコミットするため
