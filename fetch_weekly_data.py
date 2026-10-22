@@ -79,7 +79,6 @@ def main():
         else:
             got = {}
         # 一括取得で欠けた銘柄は少し待ってからまとめて1回だけ取り直す
-        # （1銘柄ずつ取り直すとアクセス制限にかかり、かえって欠けが増えた）
         missing = [t for t in batch if t not in got]
         if missing:
             time.sleep(SLEEP_SEC * 3)

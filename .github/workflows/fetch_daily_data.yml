@@ -24,7 +24,7 @@ jobs:
           python-version: '3.11'
 
       - name: 依存パッケージをインストール
-        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy pyarrow
+        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy scikit-learn pyarrow  # yfinanceの価格補正(repair=True)にscikit-learnが必要
 
       - name: 日足データを取得
         run: |

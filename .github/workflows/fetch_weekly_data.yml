@@ -2,6 +2,9 @@ name: Fetch Weekly Data
 
 on:
   workflow_dispatch:   # GitHubの「Run workflow」ボタンから手動実行
+  push:                # このワークフロー自体を変更したときだけ自動実行
+    paths:
+      - .github/workflows/fetch_weekly_data.yml
 
 permissions:
   contents: write   # 取得したデータをリポジトリにコミットするため
@@ -19,7 +22,7 @@ jobs:
           python-version: '3.11'
 
       - name: 依存パッケージをインストール
-        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy pyarrow
+        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy scikit-learn pyarrow  # yfinanceの価格補正(repair=True)にscikit-learnが必要
 
       - name: 週足データを取得
         run: python fetch_weekly_data.py
