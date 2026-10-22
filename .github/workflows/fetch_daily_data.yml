@@ -27,9 +27,13 @@ jobs:
         run: pip install yfinance pandas numpy requests openpyxl xlrd scipy pyarrow
 
       - name: 日足データを取得
-        run: python fetch_daily_data.py
+        run: |
+          set -o pipefail
+          mkdir -p data_daily
+          python -u fetch_daily_data.py 2>&1 | tee data_daily/fetch_log.txt
 
-      - name: data-daily ブランチに保存（履歴を残さず毎回上書き）
+      - name: data-daily ブランチに保存（履歴を残さず毎回上書き。失敗時もログだけ保存）
+        if: always()
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"

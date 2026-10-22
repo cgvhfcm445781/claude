@@ -13,12 +13,13 @@ import warnings
 import numpy as np
 import pandas as pd
 from Weekly_backtest import clean_daily
-from fetch_weekly_data import download_batch, BATCH, SLEEP_SEC, MIN_KEEP_RATIO
+from fetch_weekly_data import download_batch, BATCH, SLEEP_SEC
 
 warnings.simplefilter('ignore', FutureWarning)
 
 OUT_DIR = "data_daily"
 N_SHARDS = 8
+MIN_KEEP_RATIO = 0.5   # 日足は専用ブランチに置くので、半分以上取れていれば保存する（欠けた銘柄は分析から外れるだけ）
 
 
 def to_daily(d):
@@ -64,11 +65,12 @@ def main():
         print(f"{min(i + BATCH, len(tickers))}/{len(tickers)} 銘柄 ({time.time() - start:.0f}秒)")
 
     df = pd.concat(frames, ignore_index=True)
-    # 週足データの銘柄数と比べて大幅に少なければ、アクセス制限とみなして保存しない
+    # 週足データの銘柄数と比べて半分未満なら、アクセス制限とみなして保存しない
     n_weekly = pd.concat([pd.read_parquet(f, columns=['ticker'])
                           for f in glob.glob(os.path.join('data', 'weekly_prices_*.parquet'))])['ticker'].nunique()
     if df['ticker'].nunique() < n_weekly * MIN_KEEP_RATIO:
-        raise SystemExit(f"⚠ 日足の銘柄数 {df['ticker'].nunique()} が週足の {n_weekly} より大幅に少ないため保存しません")
+        raise SystemExit(f"⚠ 日足の銘柄数 {df['ticker'].nunique()} が週足の {n_weekly} の半分未満のため保存しません")
+    print(f"日足 {df['ticker'].nunique()} 銘柄 / 週足 {n_weekly} 銘柄")
     for c in ['Open', 'High', 'Low', 'Close', 'Volume', 'split_factor']:
         df[c] = df[c].astype('float32')
     df = df[['ticker', 'date', 'Open', 'High', 'Low', 'Close', 'Volume', 'split_factor']].sort_values(['ticker', 'date'])
