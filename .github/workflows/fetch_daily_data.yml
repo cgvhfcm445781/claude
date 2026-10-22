@@ -1,0 +1,40 @@
+name: Fetch Daily Data
+
+on:
+  workflow_dispatch:   # GitHubの「Run workflow」ボタンから手動実行
+  push:                # 取得スクリプトを変更したときだけ自動実行
+    paths:
+      - fetch_daily_data.py
+      - .github/workflows/fetch_daily_data.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy pyarrow
+
+      - name: 日足データを取得
+        run: python fetch_daily_data.py
+
+      - name: data-daily ブランチに保存（履歴を残さず毎回上書き）
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git checkout --orphan data-daily
+          git rm -rf --cached . -q
+          git add -f data_daily/
+          git commit -q -m "日足データ $(date +'%Y-%m-%d %H:%M')"
+          git push -f origin data-daily
