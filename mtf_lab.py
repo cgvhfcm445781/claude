@@ -161,6 +161,35 @@ def evaluate(df):
     return pd.DataFrame(rows)
 
 
+def crash_timing(df):
+    """急落リバウンド戦略を日足でタイミング調整した場合（急落局面で20日騰落が下位10%の銘柄）"""
+    g = df.groupby('ticker')
+    df = df.assign(ret20=(df['Close'] / g['Close'].shift(20) - 1) * 100,
+                   up_day=df['Close'] > g['Close'].shift(), hi_break=df['Close'] > g['High'].shift())
+    u = df[df['universe']].copy()
+    u['r20rank'] = u.groupby('date')['ret20'].rank(pct=True)
+    base = (u['mk_ret4w'] <= -5) & (u['r20rank'] <= .1)
+    conds = {
+        '急落&下落上位10%': base,
+        ' + 日足RSI(2)<10 (さらに売られた日)': base & (u['d_rsi2'] < 10),
+        ' + 前日高値を上抜け (反転確認)': base & _b(u['hi_break']),
+        ' + 陽線': base & _b(u['up_day']),
+        ' + 陰線': base & ~_b(u['up_day']),
+        ' + 日足ストキャGC': base & _b(u['d_sto_gc']),
+        ' + 月足↑': base & _b(u['m_above']),
+        ' + 月足↓': base & ~_b(u['m_above']),
+    }
+    rows = []
+    for k, m in conds.items():
+        x = u[m]
+        r = {'条件': k, '件数': len(x), '20日 素': x['fwd20'].mean(), '20日 勝率': (x['fwd20'] > 0).mean() * 100}
+        for p, a, b in PERIODS:
+            r[p] = x.loc[(x['date'] >= (a or '1900')) & (x['date'] < (b or '2100')), 'fwd20'].mean()
+        rows.append(r)
+    print("\n===== 急落リバウンドの日足タイミング: 翌日寄りで買い20日後の終値まで(%) =====")
+    print(pd.DataFrame(rows).set_index('条件').round(2).to_string())
+
+
 def main():
     df = build_panel(cache=sys.argv[1] if len(sys.argv) > 1 else None)
     print(f"日足パネル: {len(df)} 行, {df['ticker'].nunique()} 銘柄, {df['date'].min():%Y-%m-%d}〜{df['date'].max():%Y-%m-%d}")
@@ -171,6 +200,7 @@ def main():
     print(res.set_index(['日足エントリー', '上位足フィルター']).round(2).to_string())
     os.makedirs('output', exist_ok=True)
     res.to_csv('output/mtf_lab.csv', index=False, encoding='utf-8-sig')
+    crash_timing(df)
 
 
 if __name__ == '__main__':
