@@ -1,0 +1,43 @@
+name: Fetch J-Quants Data
+
+on:
+  workflow_dispatch:   # GitHubの「Run workflow」ボタンから手動実行
+  push:                # 設定ファイル(jquants_config.json)を変更したときだけ自動実行
+    paths:
+      - jquants_config.json
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: pip install jquants-api-client pandas pyarrow
+
+      - name: J-Quantsからデータを取得
+        env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: python fetch_jquants.py
+
+      - name: データをコミット（途中までの取得分も保存）
+        if: always()
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          [ -d data_jq ] || exit 0
+          git add data_jq/
+          git diff --staged --quiet && echo "変更なし" && exit 0
+          git commit -m "J-Quantsデータを更新 $(date +'%Y-%m-%d %H:%M')"
+          git pull --rebase origin ${GITHUB_REF_NAME}
+          git push origin HEAD:${GITHUB_REF_NAME}
