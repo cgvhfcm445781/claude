@@ -1,6 +1,6 @@
 {
-  "start": "auto",
+  "start": "2016-10-24",
   "end": "auto",
-  "rpm": 4,
+  "rpm": 100,
   "minutes": 330
 }
