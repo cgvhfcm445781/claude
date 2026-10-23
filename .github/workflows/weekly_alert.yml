@@ -1,0 +1,44 @@
+name: Weekly Signal Alert
+
+on:
+  workflow_dispatch:   # iPhoneのショートカット（GitHub API）や「Run workflow」ボタンから手動実行
+  push:                # 通知スクリプトを変更したときに動作確認として実行
+    paths:
+      - weekly_alert.py
+      - .github/workflows/weekly_alert.yml
+
+permissions:
+  contents: write      # J-Quantsで追加取得したデータをコミットするため
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 依存パッケージをインストール
+        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy scikit-learn pyarrow jquants-api-client
+
+      - name: シグナルを計算してDiscordに通知
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: python -u weekly_alert.py
+
+      - name: 追加取得したJ-Quantsデータをコミット
+        if: always()
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add data_jq/fin_summary.parquet data_jq/margin.parquet
+          git diff --staged --quiet && echo "変更なし" && exit 0
+          git commit -m "J-Quantsデータを追加取得 $(date +'%Y-%m-%d %H:%M')"
+          git pull --rebase origin ${GITHUB_REF_NAME}
+          git push origin HEAD:${GITHUB_REF_NAME}
