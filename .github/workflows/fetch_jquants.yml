@@ -28,7 +28,10 @@ jobs:
       - name: J-Quantsからデータを取得
         env:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
-        run: python fetch_jquants.py
+        run: |
+          set -o pipefail
+          mkdir -p data_jq
+          python -u fetch_jquants.py 2>&1 | tee data_jq/fetch_log.txt
 
       - name: データをコミット（途中までの取得分も保存）
         if: always()
