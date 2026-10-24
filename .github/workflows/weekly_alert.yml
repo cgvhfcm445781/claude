@@ -2,11 +2,6 @@ name: Weekly Signal Alert
 
 on:
   workflow_dispatch:   # iPhoneのショートカット（GitHub API）や「Run workflow」ボタンから手動実行
-  push:                # 通知スクリプトを変更したときに動作確認として実行
-    paths:
-      - weekly_alert.py
-      - jpx_margin.py
-      - .github/workflows/weekly_alert.yml
 
 permissions:
   contents: write      # J-Quantsで追加取得したデータをコミットするため

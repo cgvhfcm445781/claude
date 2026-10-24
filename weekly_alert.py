@@ -267,7 +267,8 @@ def main():
     # ---- 銘柄リスト ----
     light = ~u['heavy_margin'].fillna(False)
     v = u[light & u['m_above'] & (u['E/P'] > 0)].nlargest(PICK_N, 'E/P')
-    m = u[light & u['mom12_1'].notna()].nlargest(PICK_N, 'mom12_1')
+    # 割安株と同じ銘柄は順張り側では外し、次の順位の銘柄を使う（同じ銘柄を二重に持たない）
+    m = u[light & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
     crash = nk4 <= CRASH_TH
     c = u.assign(r4rank=u['ret4'].rank(pct=True))
     c = c[c['r4rank'] <= LOSER_PCT].sort_values('ret4')
