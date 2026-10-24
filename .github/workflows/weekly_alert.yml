@@ -5,6 +5,7 @@ on:
   push:                # 通知スクリプトを変更したときに動作確認として実行
     paths:
       - weekly_alert.py
+      - jpx_margin.py
       - .github/workflows/weekly_alert.yml
 
 permissions:
@@ -24,7 +25,7 @@ jobs:
           python-version: '3.11'
 
       - name: 依存パッケージをインストール
-        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy scikit-learn pyarrow jquants-api-client
+        run: pip install yfinance pandas numpy requests openpyxl xlrd scipy scikit-learn pyarrow jquants-api-client pdfplumber
 
       - name: シグナルを計算してDiscordに通知
         env:
@@ -32,13 +33,14 @@ jobs:
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
         run: python -u weekly_alert.py
 
-      - name: 追加取得したJ-Quantsデータをコミット
+      - name: 保有銘柄・取引履歴・追加取得した決算データをコミット
         if: always()
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add data_jq/fin_summary.parquet data_jq/margin.parquet
+          git add data_jq/fin_summary.parquet portfolio.csv trade_history.csv 2>/dev/null || true
+          git add data_jq/fin_summary.parquet portfolio.csv || true
           git diff --staged --quiet && echo "変更なし" && exit 0
-          git commit -m "J-Quantsデータを追加取得 $(date +'%Y-%m-%d %H:%M')"
+          git commit -m "週次シグナル: 保有銘柄とデータを更新 $(date +'%Y-%m-%d %H:%M')"
           git pull --rebase origin ${GITHUB_REF_NAME}
           git push origin HEAD:${GITHUB_REF_NAME}

@@ -10,7 +10,8 @@
 
 データ
 - 株価: yfinance（実行のたびに直近2年分を取得）
-- 決算・信用残: J-Quants（data_jq/ に保存済みのデータに、足りない日の分だけ追加取得してコミット）
+- 決算: J-Quants Light（data_jq/ に保存済みのデータに、足りない日の分だけ追加取得してコミット）
+- 信用残: JPXが毎営業日公開している銘柄別信用取引残高のPDF（jpx_margin.py）
 環境変数: DISCORD_WEBHOOK_URL, JQUANTS_API_KEY
 """
 import json
@@ -57,45 +58,42 @@ def code_to_ticker(code):
     return (c[:4] if len(c) == 5 else c) + '.T'
 
 
-def update_jquants():
+def update_fin():
+    """決算データ（J-Quants Light）: 保存済みのデータに、足りない日の分だけ追加取得する"""
     key = os.environ.get('JQUANTS_API_KEY', '')
-    fin = pd.read_parquet(os.path.join(JQ_DIR, 'fin_summary.parquet'))
-    mar = pd.read_parquet(os.path.join(JQ_DIR, 'margin.parquet'))
+    path = os.path.join(JQ_DIR, 'fin_summary.parquet')
+    fin = pd.read_parquet(path)
     if not key:
-        print("⚠ JQUANTS_API_KEY が未設定のため、保存済みのデータだけで計算します")
-        return fin, mar
+        print("⚠ JQUANTS_API_KEY が未設定のため、保存済みの決算データだけで計算します")
+        return fin
     from jquantsapi import ClientV2
     cli = ClientV2(api_key=key)
     today = pd.Timestamp.now(tz='Asia/Tokyo').tz_localize(None).normalize()
-    new_fin, new_mar = [], []
+    new = []
     for d in pd.bdate_range(pd.to_datetime(fin['DiscDate']).max() + pd.Timedelta(days=1), today):
         try:
             x = cli.get_fin_summary(date_yyyymmdd=d.strftime('%Y%m%d'))
             if len(x):
-                new_fin.append(x)
+                new.append(x)
         except Exception as e:
             print(f"⚠ 決算 {d:%Y-%m-%d}: {str(e)[:120]}")
-        time.sleep(0.7)
-    for d in pd.bdate_range(pd.to_datetime(mar['Date']).max() + pd.Timedelta(days=1), today):
-        try:
-            x = cli.get_mkt_margin_interest(date_yyyymmdd=d.strftime('%Y%m%d'))
-            if len(x):
-                new_mar.append(x)
-        except Exception as e:
-            print(f"⚠ 信用残 {d:%Y-%m-%d}: {str(e)[:120]}")
-        time.sleep(0.7)
+        time.sleep(1.1)   # Lightプランの上限(60回/分)に収める
+    if new:
+        fin = pd.concat([fin] + new, ignore_index=True)
+        fin = fin.astype({c: 'string' for c in fin.columns if fin[c].dtype == object}).drop_duplicates()
+        fin.to_parquet(path, index=False)
+    print(f"J-Quants 決算の追加取得: {sum(len(x) for x in new)} 件")
+    return fin
 
-    def merge(old, new, path):
-        if not new:
-            return old
-        df = pd.concat([old] + new, ignore_index=True)
-        df = df.astype({c: 'string' for c in df.columns if df[c].dtype == object}).drop_duplicates()
-        df.to_parquet(path, index=False)
-        return df
-    fin = merge(fin, new_fin, os.path.join(JQ_DIR, 'fin_summary.parquet'))
-    mar = merge(mar, new_mar, os.path.join(JQ_DIR, 'margin.parquet'))
-    print(f"J-Quants 追加取得: 決算 {sum(len(x) for x in new_fin)} 件, 信用残 {sum(len(x) for x in new_mar)} 件")
-    return fin, mar
+
+def get_margin(asof):
+    """信用残（JPXの無料PDF）。取れなければ保存済みの J-Quants データで代用"""
+    try:
+        import jpx_margin
+        return jpx_margin.fetch_latest(on_or_before=asof)
+    except Exception as e:
+        print(f"⚠ JPXの信用残を取得できませんでした（{e}）。保存済みのデータを使います")
+        return pd.read_parquet(os.path.join(JQ_DIR, 'margin.parquet'))
 
 
 # ---------------- 株価 ----------------
@@ -177,7 +175,7 @@ def add_fundamentals(f, fin, mar, asof):
     mar = mar.copy()
     mar['ticker'] = mar['Code'].map(code_to_ticker)
     mar['Date'] = pd.to_datetime(mar['Date'])
-    mar = mar[mar['Date'] <= asof - pd.Timedelta(days=3)]   # 公表済み（申込日の翌週）のものだけ
+    mar = mar[mar['Date'] <= asof]
     latest = mar[mar['Date'] == mar['Date'].max()]
     lv = latest.groupby('ticker')['LongVol'].apply(lambda s: pd.to_numeric(s, errors='coerce').sum())
     sv = latest.groupby('ticker')['ShrtVol'].apply(lambda s: pd.to_numeric(s, errors='coerce').sum())
@@ -189,9 +187,66 @@ def add_fundamentals(f, fin, mar, asof):
     return f, mar['Date'].max()
 
 
+# ---------------- 保有銘柄の管理（portfolio.csv） ----------------
+PF_PATH, HIST_PATH = 'portfolio.csv', 'trade_history.csv'
+PF_COLS = ['種類', 'コード', '銘柄名', 'シグナル日', '買付日', '買値', '利確価格', '売り期限', '状態']
+
+
+def load_portfolio():
+    if os.path.exists(PF_PATH):
+        pf = pd.read_csv(PF_PATH, encoding='utf-8-sig')
+        for c in PF_COLS:
+            if c not in pf:
+                pf[c] = np.nan
+        return pf[PF_COLS]
+    return pd.DataFrame(columns=PF_COLS)
+
+
+def save_portfolio(pf, hist):
+    pf.to_csv(PF_PATH, index=False, encoding='utf-8-sig')
+    if hist:
+        h = pd.DataFrame(hist)
+        if os.path.exists(HIST_PATH):
+            h = pd.concat([pd.read_csv(HIST_PATH, encoding='utf-8-sig'), h], ignore_index=True)
+        h.to_csv(HIST_PATH, index=False, encoding='utf-8-sig')
+
+
+def show(r):
+    return f"{str(r['コード']).replace('.T', '')} {str(r['銘柄名'])[:10]}"
+
+
+def add_row(pf, kind, r, asof, deadline):
+    row = {'種類': kind, 'コード': r['ticker'], '銘柄名': r['name'], 'シグナル日': f"{asof:%Y-%m-%d}",
+           '買付日': np.nan, '買値': np.nan, '利確価格': np.nan, '売り期限': f"{deadline:%Y-%m-%d}", '状態': '買い予定'}
+    return pd.concat([pf, pd.DataFrame([row])], ignore_index=True)
+
+
+def fill_entry_prices(pf, prices):
+    """買い予定の銘柄に、シグナル日の翌営業日の始値を買値として記録する"""
+    for i, r in pf[pf['状態'] == '買い予定'].iterrows():
+        d = prices.get(r['コード'])
+        if d is None:
+            continue
+        nxt = d[d.index > pd.Timestamp(r['シグナル日'])]
+        if len(nxt):
+            pf.loc[i, ['買付日', '買値', '状態']] = [f"{nxt.index[0]:%Y-%m-%d}", float(nxt['Open'].iloc[0]), '保有']
+            if r['種類'] == '急落':
+                pf.loc[i, '利確価格'] = round(float(nxt['Open'].iloc[0]) * (1 + TARGET))
+    pf['買値'] = pd.to_numeric(pf['買値'], errors='coerce')
+    pf['利確価格'] = pd.to_numeric(pf['利確価格'], errors='coerce')
+    return pf
+
+
+def close_row(r, price, date, reason):
+    ret = (price / r['買値'] - 1) * 100 if pd.notna(r['買値']) and r['買値'] > 0 else np.nan
+    return {'種類': r['種類'], 'コード': r['コード'], '銘柄名': r['銘柄名'], '買付日': r['買付日'], '買値': r['買値'],
+            '売却日(目安)': f"{pd.Timestamp(date):%Y-%m-%d}", '売値(目安)': round(float(price), 1) if pd.notna(price) else np.nan,
+            '損益%(目安)': round(ret, 2) if pd.notna(ret) else np.nan, '理由': reason}
+
+
 def main():
     t0 = time.time()
-    fin, mar = update_jquants()
+    fin = update_fin()
     meta = get_jpx_stock_list()
     names = dict(zip(meta['Ticker'], meta['銘柄名']))
     prices = download_prices(meta['Ticker'].tolist())
@@ -202,45 +257,105 @@ def main():
     vix_w = mk['^VIX'][mk['^VIX'].index <= asof + pd.Timedelta(days=1)].resample('W-FRI').last().dropna()
     vix_off = vix_w.iloc[-1] < vix_w.tail(4).max() * 0.85
 
+    mar = get_margin(asof)
     f = stock_features(prices, asof)
     f, mar_date = add_fundamentals(f, fin, mar, asof)
     f['name'] = f['ticker'].map(names)
     u = f[f['universe']].copy()
     nm = lambda r: f"{r.ticker.replace('.T', '')} {str(r['name'])[:10]}"
 
-    lines = [f"📊 **週次シグナル**（{asof:%Y-%m-%d} 終値時点）", '']
-    # 1. 急落リバウンド
+    # ---- 銘柄リスト ----
+    light = ~u['heavy_margin'].fillna(False)
+    v = u[light & u['m_above'] & (u['E/P'] > 0)].nlargest(PICK_N, 'E/P')
+    m = u[light & u['mom12_1'].notna()].nlargest(PICK_N, 'mom12_1')
     crash = nk4 <= CRASH_TH
-    lines.append(f"■ 急落リバウンド: 日経平均の4週騰落 {nk4:+.1f}%（発動 {CRASH_TH}%以下） / VIX {vix_w.iloc[-1]:.1f}"
-                 f"{'（ピークアウト済み）' if vix_off else ''}")
-    if crash:
-        u['r4rank'] = u['ret4'].rank(pct=True)
-        c = u[u['r4rank'] <= LOSER_PCT].sort_values('ret4').head(CRASH_N)
-        lines.append(f"🚨 **シグナルあり** → 翌営業日の寄り付きで買い、+{TARGET:.0%}で利確の指値、"
-                     f"届かなければ {(asof + pd.Timedelta(weeks=HOLD_WEEKS)):%Y-%m-%d} の終値で売り")
-        for _, r in c.iterrows():
-            lines.append(f"・{nm(r)}  {r.price:,.0f}円（4週{r.ret4:+.1f}%） 利確目安 {r.price * (1 + TARGET):,.0f}円")
-        lines.append("※急落中は、割安株・順張りの資金をこちらに回す（終わったら戻す）")
-    else:
-        lines.append("シグナルなし")
-    lines.append('')
-    # 2・3. 割安株・順張り
+    c = u.assign(r4rank=u['ret4'].rank(pct=True))
+    c = c[c['r4rank'] <= LOSER_PCT].sort_values('ret4')
     k = int(np.ceil((asof - REBALANCE_ANCHOR).days / 91))
     next_reb = REBALANCE_ANCHOR + pd.Timedelta(weeks=13 * max(k, 0))
     is_reb = abs((asof - next_reb).days) <= 3
     if not is_reb and next_reb < asof:
         next_reb += pd.Timedelta(weeks=13)
-    lines.append(f"■ 割安株・順張り（各{PICK_N}銘柄を半分ずつ、13週ごとに入れ替え）"
-                 f"{' 🔁 **今週が入れ替え週**（翌営業日の寄り付きで入れ替え）' if is_reb else f' 次の入れ替え: {next_reb:%Y-%m-%d}の引け後'}")
-    light = ~u['heavy_margin'].fillna(False)
-    v = u[light & u['m_above'] & (u['E/P'] > 0)].nlargest(PICK_N, 'E/P')
-    lines.append("【割安株】低PER & 12か月線より上 & 信用残が重くない")
-    for _, r in v.iterrows():
-        lines.append(f"・{nm(r)}  {r.price:,.0f}円  PER {1 / r['E/P']:.1f}倍")
-    m = u[light & u['mom12_1'].notna()].nlargest(PICK_N, 'mom12_1')
-    lines.append("【順張り】過去12か月（直近1か月を除く）の上昇率上位 & 信用残が重くない")
-    for _, r in m.iterrows():
-        lines.append(f"・{nm(r)}  {r.price:,.0f}円  12か月 {r.mom12_1 * 100:+.0f}%")
+
+    # ---- 保有銘柄の管理 ----
+    pf = load_portfolio()
+    hist = []
+    act_sell, act_buy, notes = [], [], []
+    pf = fill_entry_prices(pf, prices)
+    # 急落銘柄: 利確・期限
+    for i, r in pf[(pf['種類'] == '急落') & (pf['状態'] == '保有')].iterrows():
+        d = prices.get(r['コード'])
+        if d is None:
+            continue
+        after = d[d.index >= pd.Timestamp(r['買付日'])]
+        if (after['High'] >= r['利確価格']).any():
+            hist.append(close_row(r, r['利確価格'], after.index[(after['High'] >= r['利確価格']).argmax()], '利確'))
+            notes.append(f"✅ 利確（指値が約定しているはず）: {show(r)} {r['利確価格']:,.0f}円")
+            pf = pf.drop(i)
+            continue
+        dl = pd.Timestamp(r['売り期限'])
+        if asof >= dl:
+            act_sell.append(f"・{show(r)}（急落・保有期限切れ）→ 翌営業日の寄り付きで売り（期限 {dl:%m/%d} の大引けで売っていれば不要）")
+            hist.append(close_row(r, d['Close'].iloc[-1], asof, '期限'))
+            pf = pf.drop(i)
+        elif (dl - asof).days <= 7:
+            act_sell.append(f"・{show(r)}（急落・期限）→ {dl:%m/%d}(金) の大引けで売り（引け成行）")
+    # 割安株・順張り: 入れ替え週（または保有がまだ無いとき）
+    first_time = pf[pf['種類'].isin(['割安株', '順張り'])].empty
+    if is_reb or first_time:
+        for kind, picks in (('割安株', v), ('順張り', m)):
+            held = pf[pf['種類'] == kind]
+            new = set(picks['ticker'])
+            for i, r in held.iterrows():
+                if r['コード'] not in new:
+                    act_sell.append(f"・{show(r)}（{kind}・入れ替えで外れた）→ 翌営業日の寄り付きで売り")
+                    d = prices.get(r['コード'])
+                    hist.append(close_row(r, d['Close'].iloc[-1] if d is not None else np.nan, asof, '入れ替え'))
+                    pf = pf.drop(i)
+            for _, r in picks.iterrows():
+                if r['ticker'] not in set(held['コード']):
+                    act_buy.append(f"・{nm(r)} {r.price:,.0f}円（{kind}）")
+                    pf = add_row(pf, kind, r, asof, next_reb + pd.Timedelta(weeks=13) if is_reb else next_reb)
+    # 急落リバウンド: シグナルが出たら空き枠の分だけ買う
+    if crash:
+        held = set(pf.loc[pf['種類'] == '急落', 'コード'])
+        room = CRASH_N - len(held)
+        for _, r in c[~c['ticker'].isin(held)].head(max(room, 0)).iterrows():
+            act_buy.append(f"・{nm(r)} {r.price:,.0f}円（急落・4週{r.ret4:+.1f}%）→ 約定したら買値の+{TARGET:.0%}に売り指値")
+            pf = add_row(pf, '急落', r, asof, asof + pd.Timedelta(weeks=HOLD_WEEKS))
+    save_portfolio(pf, hist)
+
+    # ---- 通知文 ----
+    lines = [f"📊 **週次シグナル**（{asof:%Y-%m-%d} 終値時点）", '']
+    lines.append("■ **今週やること**")
+    if act_sell:
+        lines.append("【売り】")
+        lines += act_sell
+    if act_buy:
+        lines.append("【買い】翌営業日の寄り付きで")
+        lines += act_buy
+        if crash:
+            lines.append("※急落銘柄の資金は、割安株・順張りを均等に一部売って用意（急落1銘柄あたり資金全体の約1/10が目安）")
+    lines += notes
+    if not (act_sell or act_buy or notes):
+        lines.append("なし（そのまま保有）")
+    lines.append('')
+    lines.append(f"■ 急落リバウンド: 日経平均の4週騰落 {nk4:+.1f}%（発動 {CRASH_TH}%以下） / VIX {vix_w.iloc[-1]:.1f}"
+                 f"{'（ピークアウト済み）' if vix_off else ''} → {'🚨シグナルあり' if crash else 'シグナルなし'}")
+    lines.append(f"■ 割安株・順張りの入れ替え: {'🔁 今週' if is_reb else f'次回 {next_reb:%Y-%m-%d} の引け後'}")
+    lines.append('')
+    lines.append("■ 保有中（買値は約定した日の始値で記録。実際と違うときは portfolio.csv を編集）")
+    for kind in ('急落', '割安株', '順張り'):
+        h = pf[pf['種類'] == kind]
+        if h.empty:
+            continue
+        lines.append(f"【{kind}】{len(h)}銘柄")
+        for _, r in h.iterrows():
+            d = prices.get(r['コード'])
+            now = d['Close'].iloc[-1] if d is not None else np.nan
+            pl = f"{(now / r['買値'] - 1) * 100:+.1f}%" if pd.notna(r['買値']) and r['買値'] > 0 else '買い予定'
+            extra = f" 利確{r['利確価格']:,.0f}円 期限{pd.Timestamp(r['売り期限']):%m/%d}" if kind == '急落' and pd.notna(r['利確価格']) else ''
+            lines.append(f"・{show(r)} {now:,.0f}円 {pl}{extra}")
     lines.append('')
     lines.append(f"（株価 {len(f)}銘柄・ユニバース {len(u)}銘柄 / 信用残 {mar_date:%Y-%m-%d}時点 / 処理 {time.time() - t0:.0f}秒）")
     send_discord('\n'.join(lines))
