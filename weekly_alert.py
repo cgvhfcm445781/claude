@@ -152,12 +152,14 @@ def stock_features(prices, asof):
         if (asof + pd.offsets.BDay(1)).month == asof.month:     # 月の途中なら当月の足はまだ確定していない
             me = me[me.index < asof.replace(day=1)]
         val20 = (C * d['Volume']).tail(20).mean()
-        rows.append({'ticker': t, 'price': C.iloc[-1], 'value20': val20,
+        # 1日で±50%を超える動き（値幅制限があるので実際にはまず起きない＝株価データの誤り）が過去1年にあれば外す
+        bad = bool((C.pct_change().abs().tail(260) > 0.5).any())
+        rows.append({'ticker': t, 'price': C.iloc[-1], 'value20': val20, 'bad_data': bad,
                      'ret4': (wk.iloc[-1] / wk.iloc[-5] - 1) * 100 if len(wk) > 5 else np.nan,
                      'mom12_1': C.iloc[-21] / C.iloc[-251] - 1 if len(C) > 251 else np.nan,
                      'm_above': me.iloc[-1] > me.tail(12).mean() if len(me) >= 12 else False})
     f = pd.DataFrame(rows)
-    f['universe'] = (f['value20'] >= MIN_DAILY_VALUE) & f['price'].between(PRICE_MIN, PRICE_MAX)
+    f['universe'] = (f['value20'] >= MIN_DAILY_VALUE) & f['price'].between(PRICE_MIN, PRICE_MAX) & ~f['bad_data']
     return f
 
 
