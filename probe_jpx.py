@@ -8,9 +8,9 @@ import requests
 
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
 BASE = "https://www.jpx.co.jp"
-PAGES = ["/markets/statistics-equities/margin/05.html", "/markets/statistics-equities/margin/index.html",
-         "/markets/statistics-equities/margin/02.html", "/markets/statistics-equities/margin/04.html",
-         "/corporate/news/news-releases/6020/20260729-01.html"]
+PAGES = ["/markets/statistics-equities/margin/01.html", "/markets/statistics-equities/margin/03.html",
+         "/markets/statistics-equities/margin/06.html", "/markets/statistics-equities/margin/07.html",
+         "/markets/statistics-equities/margin/08.html", "/markets/statistics-equities/margin/09.html"]
 OUT = "probe_jpx"
 
 
@@ -25,14 +25,15 @@ def main():
             report.append(f"## {p} status={r.status_code} len={len(r.text)}")
             text = re.sub(r"<[^>]+>", " ", r.text)
             text = re.sub(r"\s+", " ", text)
-            report.append(text[:3000])
+            i = text.rfind("信用取引残高等 ")
+            report.append(text[i:i + 2500])
             links = re.findall(r'href="([^"]+\.(?:xls|xlsx|csv|pdf|zip))"', r.text, flags=re.I)
             report.append("links: " + "\n".join(links[:40]))
             files += [l for l in links if re.search(r"\.(xls|xlsx|csv|zip)$", l, re.I)]
         except Exception as e:
             report.append(f"## {p} error {e}")
     # 表計算ファイルを最大4つダウンロードして中身の冒頭を記録
-    for l in list(dict.fromkeys(files))[:4]:
+    for l in list(dict.fromkeys(files))[:6]:
         url = l if l.startswith("http") else BASE + l
         try:
             r = requests.get(url, headers=UA, timeout=60)
