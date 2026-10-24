@@ -2,9 +2,6 @@ name: Weekly Signal Alert
 
 on:
   workflow_dispatch:   # iPhoneのショートカット（GitHub API）や「Run workflow」ボタンから手動実行
-  push:                # 動作確認用（mainに入れる前に外す）
-    branches: [analyze-weekly-trend-filter]
-    paths: [weekly_alert.py]
 
 permissions:
   contents: write      # J-Quantsで追加取得したデータをコミットするため
