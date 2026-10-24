@@ -1,0 +1,188 @@
+links (7):
+/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261022_mtall.pdf
+/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261021_mtall.pdf
+/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261020_mtall.pdf
+/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261020_mtall_01.pdf
+/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261019_mtall.pdf
+/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261019_mtall_01.pdf
+/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261016_mtall.pdf
+downloaded https://www.jpx.co.jp/markets/statistics-equities/margin/tvdivq0000001rnl-att/20261022_mtall.pdf 1775993 bytes
+pages 109
+----- page 1 text -----
+(注）１．前日比欄 ：▲は減少、無印は増加。
+２．銘 柄 欄 ：Aは１株、Jは１０株、Kは５０株、Bは１００株、Mは２００株、Cは５００株、Tは１,０００株、Fは３,０００株を１単位とする銘柄。「制度信用銘柄」は貸借銘柄以外の制度信用銘柄。
+３．表示単位 ：全ての銘柄を１株、１円単位で表示。なお、「投信等」の残高口数は、１口を１株として表示。
+(Note)1. Daily change : ▲ indicates fall, no symbol indicates rise.
+2. Issue : A indicates 1 share, J: 10 shares, K: 50 shares, B: 100 shares, M: 200 shares, C: 500 shares, T: 1,000 shares, F: 3,000 shares per unit. "standardized margin trading issue" indicates standardized margin trading issue except loan trading issue.
+3. Unit : All issues are shown in units of 1 share or JPY 1. 1 unit for "Investment Trusts", etc. is indicated as 1share.
+銘柄別信用取引残高
+Outstanding margin trading by issue
+2026/10/22申込み現在 東京証券取引所株式部 （単位：一株、一円） 2026/10/23
+As of 2026/10/22application based Tokyo Stock Exchange, Equities Dept. (Unit: 1 share, 1 JPY)
+銘柄 合計 Total 売残高 Outstanding Sales 買残高 Outstanding Purchases
+銘 柄 Issue Se 市 ct 場 ion Lo 種 r a g n i 別 / n Ma コ Co ー de ド N 新 ew 証 S 券 ec コ . ー Co ド de Outsta 売 nd 残 in 高 g Sales Dai 前 ly 日 c 比 hange lis R t 上 a e t d 場 i o s 比 h t a o res O P u u t 買 r s c t 残 h a a n 高 s d e i s ng Dai 前 ly 日 c 比 hange lis R t 上 a e t d 場 i o s 比 h t a o res N 一 eg 般 ot 信 ia 用 ble Dai 前 ly 日 c 比 hange St 制 an 度 da 信 rd 用 ized Dai 前 ly 日 c 比 hange N 一 eg 般 ot 信 ia 用 ble Dai 前 ly 日 c 比 hange St 制 an 度 da 信 rd 用 ized Dai 前 ly 日 c 比 hange
+B 極洋 普通株式 プライム 貸 13010 JP3257200000株数 Shs. 9,300 ▲ 200 0.1% 122,100 ▲ 1,400 1.0% 200 ▲ 100 9,100 ▲ 100 37,400 ▲ 1,000 84,700 ▲ 400
+KYOKUYO CO.,LTD. Prime Loan 13010 JP3257200000金額 Val. 43,832,000 ▲ 902,000 - 549,431,500 ▲ 6,762,500 - 900,000 ▲ 451,000 42,932,000 ▲ 451,000 168,474,000 ▲ 4,813,000 380,957,500 ▲ 1,949,500
+J ｉＦｒｅｅＥＴＦ ＴＯＰＩＸ（年１投回信決等算型） 受益貸証券 13050 JP3027620008株数 Shs. 10,560 1,040 * 53,920 740 * 900 0 9,660 1,040 32,740 360 21,180 380
+iFreeETF TOPIX (Yearly Dividend TIynpvee)stment trustsLoan 13050 JP3027620008金額 Val. 43,089,050 4,466,540 - 227,092,005 3,097,200 - 1,593,800 0 41,495,250 4,466,540 136,397,825 1,486,840 90,694,180 1,610,360
+J ＮＥＸＴ ＦＵＮＤＳ ＴＯＰＩＸ連投動信型等上場投信 受貸益証券 13060 JP3027630007株数 Shs. 5,315,470 2,501,850 * 11,632,270 ▲ 633,460 * 38,000 0 5,277,470 2,501,850 8,100,770 ▲ 500,330 3,531,500 ▲ 133,130
+NEXT FUNDS TOPIX Exchange Traded IFnuvnedstment trustsLoan 13060 JP3027630007金額 Val. 2,242,296,807 1,050,529,865 - 4,798,868,204 ▲ 272,403,134 - 15,982,800 ▲ 190,000 2,226,314,007 1,050,719,865 3,296,311,060 ▲ 214,242,496 1,502,557,144 ▲ 58,160,638
+A 上場インデックスファンドＴＯＰＩＸ投 信受等益証券 貸 13080 JP3039100007株数 Shs. 35,751 29 * 133,661 1,312 * 0 0 35,751 29 16,503 166 117,158 1,146
+Listed Index Fund TOPIX Investment trustsLoan 13080 JP3039100007金額 Val. 150,094,422 110,825 - 562,196,086 5,106,977 - 0 0 150,094,422 110,825 67,907,340 636,248 494,288,746 4,470,729
+A ＮＥＸＴ ＦＵＮＤＳ ＣｈｉｎａＡ投Ｍ信Ｃ等・中国株式・貸上証５０連動1型30上90場投信JP 30受46益51証00券08株数 Shs. 0 0 * 1,475 ▲ 18 * 0 0 0 0 1,136 0 339 ▲ 18
+NEXT FUNDS ChinaAMC SSE50 Index EIxncvheasntgmee nTtr atdreuds tFsuLnodan 13090 JP3046510008金額 Val. 0 0 - 84,266,520 ▲ 1,051,420 - 0 0 0 0 65,793,900 ▲ 980 18,472,620
+----- page 1 table rows=75 -----
+銘 柄 Issue | 市場
+Section | 銘柄
+種別
+Loan/Ma
+rgin | コード
+Code | 新証券コード
+New Sec. Code |  | 合計 Total | None | None | None | None | None | 売残高 Outstanding Sales | None | None | None | 買残高 Outstanding Purchases | None | None | None
+None | None | None | None | None | None | 売残高
+Outstanding Sales | 前日比
+Daily change | 上場比
+Ratio to
+listed shares | 買残高
+Outstanding
+Purchases | 前日比
+Daily change | 上場比
+Ratio to
+listed shares | 一般信用
+Negotiable | 前日比
+Daily change | 制度信用
+Standardized | 前日比
+Daily change | 一般信用
+Negotiable | 前日比
+Daily change | 制度信用
+Standardized | 前日比
+Daily change
+B 極洋 普通株式 | プライム | 貸 | 13010 | JP3257200000 | 株数 Shs. | 9,300 | ▲ 200 | 0.1% | 122,100 | ▲ 1,400 | 1.0% | 200 | ▲ 100 | 9,100 | ▲ 100 | 37,400 | ▲ 1,000 | 84,700 | ▲ 400
+KYOKUYO CO.,LTD. | Prime | Loan | 13010 | JP3257200000 | 金額 Val. | 43,832,000 | ▲ 902,000 | - | 549,431,500 | ▲ 6,762,500 | - | 900,000 | ▲ 451,000 | 42,932,000 | ▲ 451,000 | 168,474,000 | ▲ 4,813,000 | 380,957,500 | ▲ 1,949,500
+J ｉＦｒｅｅＥＴＦ ＴＯＰＩＸ（年 | １投回信決等算型） 受益 | 貸証券 | 13050 | JP3027620008 | 株数 Shs. | 10,560 | 1,040 | * | 53,920 | 740 | * | 900 | 0 | 9,660 | 1,040 | 32,740 | 360 | 21,180 | 380
+iFreeETF TOPIX (Yearly Dividend | TIynpvee)stment trusts | Loan | 13050 | JP3027620008 | 金額 Val. | 43,089,050 | 4,466,540 | - | 227,092,005 | 3,097,200 | - | 1,593,800 | 0 | 41,495,250 | 4,466,540 | 136,397,825 | 1,486,840 | 90,694,180 | 1,610,360
+J ＮＥＸＴ ＦＵＮＤＳ ＴＯＰＩＸ | 連投動信型等上場投信 受 | 貸益証券 | 13060 | JP3027630007 | 株数 Shs. | 5,315,470 | 2,501,850 | * | 11,632,270 | ▲ 633,460 | * | 38,000 | 0 | 5,277,470 | 2,501,850 | 8,100,770 | ▲ 500,330 | 3,531,500 | ▲ 133,130
+NEXT FUNDS TOPIX Exchange Traded | IFnuvnedstment trusts | Loan | 13060 | JP3027630007 | 金額 Val. | 2,242,296,807 | 1,050,529,865 | - | 4,798,868,204 | ▲ 272,403,134 | - | 15,982,800 | ▲ 190,000 | 2,226,314,007 | 1,050,719,865 | 3,296,311,060 | ▲ 214,242,496 | 1,502,557,144 | ▲ 58,160,638
+A 上場インデックスファンドＴＯＰＩ | Ｘ投 信受等益証券 | 貸 | 13080 | JP3039100007 | 株数 Shs. | 35,751 | 29 | * | 133,661 | 1,312 | * | 0 | 0 | 35,751 | 29 | 16,503 | 166 | 117,158 | 1,146
+Listed Index Fund TOPIX | Investment trusts | Loan | 13080 | JP3039100007 | 金額 Val. | 150,094,422 | 110,825 | - | 562,196,086 | 5,106,977 | - | 0 | 0 | 150,094,422 | 110,825 | 67,907,340 | 636,248 | 494,288,746 | 4,470,729
+A ＮＥＸＴ ＦＵＮＤＳ Ｃｈｉｎａ | Ａ投Ｍ信Ｃ等・中国株式・ | 貸上証５０ | 連動1型30上90場 | 投信JP 30受46益51証00券08 | 株数 Shs. | 0 | 0 | * | 1,475 | ▲ 18 | * | 0 | 0 | 0 | 0 | 1,136 | 0 | 339 | ▲ 18
+NEXT FUNDS ChinaAMC SSE50 Index | EIxncvheasntgmee nTtr atdreuds tFs | uLnodan | 13090 | JP3046510008 | 金額 Val. | 0 | 0 | - | 84,266,520 | ▲ 1,051,420 | - | 0 | 0 | 0 | 0 | 65,793,900 | ▲ 980 | 18,472,620 | ▲ 1,050,440
+----- page 2 text -----
+銘柄別信用取引残高
+Outstanding margin trading by issue
+2026/10/22申込み現在 東京証券取引所株式部 （単位：一株、一円） 2026/10/23
+As of 2026/10/22application based Tokyo Stock Exchange, Equities Dept. (Unit: 1 share, 1 JPY)
+銘柄 合計 Total 売残高 Outstanding Sales 買残高 Outstanding Purchases
+銘 柄 Issue Se 市 ct 場 ion Lo 種 r a g n i 別 / n Ma コ Co ー de ド N 新 ew 証 S 券 ec コ . ー Co ド de Outsta 売 nd 残 in 高 g Sales Dai 前 ly 日 c 比 hange lis R t 上 a e t d 場 i o s 比 h t a o res O P u u t 買 r s c t 残 h a a n 高 s d e i s ng Dai 前 ly 日 c 比 hange lis R t 上 a e t d 場 i o s 比 h t a o res N 一 eg 般 ot 信 ia 用 ble Dai 前 ly 日 c 比 hange St 制 an 度 da 信 rd 用 ized Dai 前 ly 日 c 比 hange N 一 eg 般 ot 信 ia 用 ble Dai 前 ly 日 c 比 hange St 制 an 度 da 信 rd 用 ized Dai 前 ly 日 c 比 hange
+KANEKO SEEDS CO.,LTD. Standard Margin 13760 JP3216200000金額 Val. 0 0 - 53,436,200 445,800 - 0 0 0 0 21,103,400 147,000 32,332,800 298,800
+B サカタのタネ 普通株式 プライム 貸 13770 JP3315000004株数 Shs. 33,700 700 0.1% 46,700 1,400 0.1% 11,800 0 21,900 700 17,500 100 29,200 1,300
+SAKATA SEED CORPORATION Prime Loan 13770 JP3315000004金額 Val. 141,310,730 2,847,500 - 202,819,500 5,827,000 - 49,002,730 0 92,308,000 2,847,500 76,401,000 414,000 126,418,500 5,413,000
+B ホクト 普通株式 プライム 貸 13790 JP3843250006株数 Shs. 6,900 200 0.0% 25,000 ▲ 2,100 0.1% 100 0 6,800 200 12,500 700 12,500 ▲ 2,800
+HOKUTO CORPORATION Prime Loan 13790 JP3843250006金額 Val. 14,264,900 423,700 - 49,243,100 ▲ 4,065,100 - 183,000 0 14,081,900 423,700 24,944,100 1,469,600 24,299,000 ▲ 5,534,700
+B Ｃｏｃｏｌｉｖｅ 普通株式 グロース 制 137A0 JP3297390001株数 Shs. 0 0 0.0% 102,400 ▲ 200 3.3% 0 0 0 0 65,200 ▲ 200 37,200 0
+Cocolive,Inc. Growth Margin 137A0 JP3297390001金額 Val. 0 0 - 138,379,600 ▲ 120,100 - 0 0 0 0 112,047,000 ▲ 120,100 26,332,600 0
+B 秋川牧園 普通株式 スタンダード 制 13800 JP3107400008株数 Shs. 0 0 0.0% 5,500 0 0.1% 0 0 0 0 1,000 0 4,500 0
+AKIKAWA FOODS & FARMS CO.,LTD. Standard Margin 13800 JP3107400008金額 Val. 0 0 - 5,682,800 ▲ 8,000 - 0 0 0 0 1,207,200 0 4,475,600 ▲ 8,000
+B アクシーズ 普通株式 スタンダード 制 13810 JP3108030002株数 Shs. 0 0 0.0% 56,900 ▲ 200 1.0% 0 0 0 0 49,500 0 7,400 ▲ 200
+AXYZ CO.,Ltd. Standard Margin 13810 JP3108030002金額 Val. 0 0 - 207,765,500 ▲ 720,000 - 0 0 0 0 181,572,000 ▲ 22,000 26,193,500 ▲ 698,000
+B ホーブ 普通株式 スタンダード 他 13820 JP3837630007株数 Shs. 0 0 0.0% 6,000 0 0.8% 0 0 0 0 4,100 0 1,900 0
+HOB Co.,Ltd. Standard Other 13820 JP3837630007金額 Val. 0 0 - 12,189,300 11,200 - 0 0 0 0 10,073,300 11,200 2,116,000 0
+B ベルグアース 普通株式 スタンダード 制 13830 JP3835730007株数 Shs. 0 0 0.0% 12,200 ▲ 200 0.8% 0 0 0 0 5,600 0 6,600 ▲ 200
+Berg Earth co.,ltd. Standard Margin 13830 JP3835730007金額 Val. 0 0 - 36,642,200 ▲ 615,000 - 0 0 0 0 16,600,300 0 20,041,900 ▲ 615,000
+B ホクリヨウ 普通株式 スタンダード 制 13840 JP3845670003株数 Shs. 0 0 0.0% 127,300 ▲ 300 1.5% 0 0 0 0 96,000 2,500 31,300 ▲ 2,800
+Hokuryo Co.,Ltd. Standard Margin 13840 JP3845670003金額 Val. 0 0 - 255,934,800 ▲ 710,000 - 0 0 0 0 188,757,700 5,271,000 67,177,100 ▲ 5,981,000
+B 光フードサービス 普通株式 グロース 制 138A0 JP3783410008株数 Shs. 400 ▲ 10,900 0.0% 77,500 7,100 7.8% 400 ▲ 10,900 0 0 59,900 3,800 17,600 3,300
+Hikari Food 
+----- page 2 table rows=81 -----
+銘 柄 Issue | 市場
+Section | 銘柄
+種別
+Loan/Ma
+rgin | コード
+Code | 新証券コード
+New Sec. Code |  | 合計 Total | None | None | None | None | None | 売残高 Outstanding Sales | None | None | None | 買残高 Outstanding Purchases | None | None | None
+None | None | None | None | None | None | 売残高
+Outstanding Sales | 前日比
+Daily change | 上場比
+Ratio to
+listed shares | 買残高
+Outstanding
+Purchases | 前日比
+Daily change | 上場比
+Ratio to
+listed shares | 一般信用
+Negotiable | 前日比
+Daily change | 制度信用
+Standardized | 前日比
+Daily change | 一般信用
+Negotiable | 前日比
+Daily change | 制度信用
+Standardized | 前日比
+Daily change
+KANEKO SEEDS CO.,LTD. | Standard | Margin | 13760 | JP3216200000 | 金額 Val. | 0 | 0 | - | 53,436,200 | 445,800 | - | 0 | 0 | 0 | 0 | 21,103,400 | 147,000 | 32,332,800 | 298,800
+B サカタのタネ 普通株式 | プライム | 貸 | 13770 | JP3315000004 | 株数 Shs. | 33,700 | 700 | 0.1% | 46,700 | 1,400 | 0.1% | 11,800 | 0 | 21,900 | 700 | 17,500 | 100 | 29,200 | 1,300
+SAKATA SEED CORPORATION | Prime | Loan | 13770 | JP3315000004 | 金額 Val. | 141,310,730 | 2,847,500 | - | 202,819,500 | 5,827,000 | - | 49,002,730 | 0 | 92,308,000 | 2,847,500 | 76,401,000 | 414,000 | 126,418,500 | 5,413,000
+B ホクト 普通株式 | プライム | 貸 | 13790 | JP3843250006 | 株数 Shs. | 6,900 | 200 | 0.0% | 25,000 | ▲ 2,100 | 0.1% | 100 | 0 | 6,800 | 200 | 12,500 | 700 | 12,500 | ▲ 2,800
+HOKUTO CORPORATION | Prime | Loan | 13790 | JP3843250006 | 金額 Val. | 14,264,900 | 423,700 | - | 49,243,100 | ▲ 4,065,100 | - | 183,000 | 0 | 14,081,900 | 423,700 | 24,944,100 | 1,469,600 | 24,299,000 | ▲ 5,534,700
+B Ｃｏｃｏｌｉｖｅ 普通株式 | グロース | 制 | 137A0 | JP3297390001 | 株数 Shs. | 0 | 0 | 0.0% | 102,400 | ▲ 200 | 3.3% | 0 | 0 | 0 | 0 | 65,200 | ▲ 200 | 37,200 | 0
+Cocolive,Inc. | Growth | Margin | 137A0 | JP3297390001 | 金額 Val. | 0 | 0 | - | 138,379,600 | ▲ 120,100 | - | 0 | 0 | 0 | 0 | 112,047,000 | ▲ 120,100 | 26,332,600 | 0
+B 秋川牧園 普通株式 | スタンダード | 制 | 13800 | JP3107400008 | 株数 Shs. | 0 | 0 | 0.0% | 5,500 | 0 | 0.1% | 0 | 0 | 0 | 0 | 1,000 | 0 | 4,500 | 0
+AKIKAWA FOODS & FARMS CO.,LTD. | Standard | Margin | 13800 | JP3107400008 | 金額 Val. | 0 | 0 | - | 5,682,800 | ▲ 8,000 | - | 0 | 0 | 0 | 0 | 1,207,200 | 0 | 4,475,600 | ▲ 8,000
+B アクシーズ 普通株式 | スタンダード | 制 | 13810 | JP3108030002 | 株数 Shs. | 0 | 0 | 0.0% | 56,900 | ▲ 200 | 1.0% | 0 | 0 | 0 | 0 | 49,500 | 0 | 7,400 | ▲ 200
+----- page 109 text -----
+銘柄別信用取引残高
+Outstanding margin trading by issue
+2026/10/22申込み現在 東京証券取引所株式部 （単位：一株、一円） 2026/10/23
+As of 2026/10/22application based Tokyo Stock Exchange, Equities Dept. (Unit: 1 share, 1 JPY)
+銘柄 合計 Total 売残高 Outstanding Sales 買残高 Outstanding Purchases
+銘 柄 Issue Se 市 ct 場 ion Lo 種 r a g n i 別 / n Ma コ Co ー de ド N 新 ew 証 S 券 ec コ . ー Co ド de Outsta 売 nd 残 in 高 g Sales Dai 前 ly 日 c 比 hange lis R t 上 a e t d 場 i o s 比 h t a o res O P u u t 買 r s c t 残 h a a n 高 s d e i s ng Dai 前 ly 日 c 比 hange lis R t 上 a e t d 場 i o s 比 h t a o res N 一 eg 般 ot 信 ia 用 ble Dai 前 ly 日 c 比 hange St 制 an 度 da 信 rd 用 ized Dai 前 ly 日 c 比 hange N 一 eg 般 ot 信 ia 用 ble Dai 前 ly 日 c 比 hange St 制 an 度 da 信 rd 用 ized Dai 前 ly 日 c 比 hange
+貸借銘柄 2673 銘柄 株数 Shs. 367,197,679 691,072 - 2,664,661,113 ▲ 3,709,215 - 84,101,206 96,659 283,096,473 594,413 1,401,409,990 2,361,884 1,263,251,123 ▲ 6,071,099
+loan trading issue 金額 Val. 693,976,809,559 234,231,327 - 5,990,470,196,379 50,376,451,228 - 207,447,722,467 ▲ 3,114,812,690 486,529,087,092 3,349,044,017 2,620,302,486,337 9,169,774,270 3,370,167,710,042 41,206,676,958
+プライム 小計 1476 銘柄 株数 Shs. 258,975,800 2,912,600 - 1,871,756,600 107,000 - 81,169,200 ▲ 185,900 177,806,600 3,098,500 931,884,700 2,258,100 939,871,900 ▲ 2,151,100
+Prime sub-total 金額 Val. 603,229,948,022 ▲ 1,540,617,605 - 5,073,884,908,601 32,573,511,463 - 204,438,245,732 ▲ 2,949,933,441 398,791,702,290 1,409,315,836 2,133,543,437,030 4,191,897,650 2,940,341,471,571 28,381,613,813
+スタンダード 小計 627 銘柄 株数 Shs. 37,593,700 718,900 - 341,552,500 1,259,300 - 1,191,800 3,100 36,401,900 715,800 188,583,400 ▲ 185,100 152,969,100 1,444,400
+Standard sub-total 金額 Val. 30,596,440,497 197,439,789 - 292,685,670,080 955,235,238 - 1,464,986,556 ▲ 24,839,040 29,131,453,941 222,278,829 155,303,496,737 603,373,610 137,382,173,343 351,861,628
+グロース 小計 156 銘柄 株数 Shs. 34,573,300 ▲ 6,728,600 - 252,689,700 ▲ 8,875,400 - 1,297,100 ▲ 111,600 33,276,200 ▲ 6,617,000 163,592,800 ▲ 548,000 89,096,900 ▲ 8,327,400
+Growth sub-total 金額 Val. 30,336,657,911 ▲ 281,962,567 - 223,942,529,596 232,121,307 - 1,404,122,201 ▲ 177,213,000 28,932,535,710 ▲ 104,749,567 137,483,897,130 76,979,700 86,458,632,466 155,141,607
+投信等 小計 414 銘柄 株数 Shs. 36,054,879 3,788,172 - 198,662,313 3,799,885 - 443,106 391,059 35,611,773 3,397,113 117,349,090 836,884 81,313,223 2,963,001
+Investment trusts sub-total 金額 Val. 29,813,763,129 1,859,371,710 - 399,957,088,102 16,615,583,220 - 140,367,978 37,172,791 29,673,395,151 1,822,198,919 193,971,655,440 4,297,523,310 205,985,432,662 12,318,059,910
+制度信用銘柄 1563 銘柄 株数 Shs. 4,129,116 ▲ 302,350 - 968,978,125 ▲ 7,520,063 - 4,111,316 ▲ 302,350 17,800 0 518,368,172 ▲ 10,383,106 450,609,953 2,863,043
+standardized margin trading issue 金額 Val. 3,955,517,563 115,736,090 - 620,453,085,640 ▲ 545,494,531 - 3,894,706,863 115,736,090 60,810,700 0 350,568,311,645 ▲ 625,577,245 269,884,773,995 80,082,714
+プライム 小計 76 銘柄 株数 Shs. 969,300 71,900 - 29,678,300 51,700 - 969,300 71,900 0 0 16,748,600 ▲ 60,400 12,929,700 112,100
+Pr
+----- page 109 table rows=42 -----
+銘 柄 Issue | 市場
+Section | 銘柄
+種別
+Loan/Ma
+rgin | コード
+Code | 新証券コード
+New Sec. Code |  | 合計 Total | None | None | None | None | None | 売残高 Outstanding Sales | None | None | None | 買残高 Outstanding Purchases | None | None | None
+None | None | None | None | None | None | 売残高
+Outstanding Sales | 前日比
+Daily change | 上場比
+Ratio to
+listed shares | 買残高
+Outstanding
+Purchases | 前日比
+Daily change | 上場比
+Ratio to
+listed shares | 一般信用
+Negotiable | 前日比
+Daily change | 制度信用
+Standardized | 前日比
+Daily change | 一般信用
+Negotiable | 前日比
+Daily change | 制度信用
+Standardized | 前日比
+Daily change
+貸借銘柄 2673 銘柄 | None | None | None |  | 株数 Shs. | 367,197,679 | 691,072 | - | 2,664,661,113 | ▲ 3,709,215 | - | 84,101,206 | 96,659 | 283,096,473 | 594,413 | 1,401,409,990 | 2,361,884 | 1,263,251,123 | ▲ 6,071,099
+loan trading issue | None | None | None |  | 金額 Val. | 693,976,809,559 | 234,231,327 | - | 5,990,470,196,379 | 50,376,451,228 | - | 207,447,722,467 | ▲ 3,114,812,690 | 486,529,087,092 | 3,349,044,017 | 2,620,302,486,337 | 9,169,774,270 | 3,370,167,710,042 | 41,206,676,958
+プライム 小計 1476 銘柄 | None | None | None |  | 株数 Shs. | 258,975,800 | 2,912,600 | - | 1,871,756,600 | 107,000 | - | 81,169,200 | ▲ 185,900 | 177,806,600 | 3,098,500 | 931,884,700 | 2,258,100 | 939,871,900 | ▲ 2,151,100
+Prime sub-total | None | None | None |  | 金額 Val. | 603,229,948,022 | ▲ 1,540,617,605 | - | 5,073,884,908,601 | 32,573,511,463 | - | 204,438,245,732 | ▲ 2,949,933,441 | 398,791,702,290 | 1,409,315,836 | 2,133,543,437,030 | 4,191,897,650 | 2,940,341,471,571 | 28,381,613,813
+スタンダード 小計 627 銘柄 | None | None | None |  | 株数 Shs. | 37,593,700 | 718,900 | - | 341,552,500 | 1,259,300 | - | 1,191,800 | 3,100 | 36,401,900 | 715,800 | 188,583,400 | ▲ 185,100 | 152,969,100 | 1,444,400
+Standard sub-total | None | None | None |  | 金額 Val. | 30,596,440,497 | 197,439,789 | - | 292,685,670,080 | 955,235,238 | - | 1,464,986,556 | ▲ 24,839,040 | 29,131,453,941 | 222,278,829 | 155,303,496,737 | 603,373,610 | 137,382,173,343 | 351,861,628
+グロース 小計 156 銘柄 | None | None | None |  | 株数 Shs. | 34,573,300 | ▲ 6,728,600 | - | 252,689,700 | ▲ 8,875,400 | - | 1,297,100 | ▲ 111,600 | 33,276,200 | ▲ 6,617,000 | 163,592,800 | ▲ 548,000 | 89,096,900 | ▲ 8,327,400
+Growth sub-total | None | None | None |  | 金額 Val. | 30,336,657,911 | ▲ 281,962,567 | - | 223,942,529,596 | 232,121,307 | - | 1,404,122,201 | ▲ 177,213,000 | 28,932,535,710 | ▲ 104,749,567 | 137,483,897,130 | 76,979,700 | 86,458,632,466 | 155,141,607
+投信等 小計 414 銘柄 | None | None | None |  | 株数 Shs. | 36,054,879 | 3,788,172 | - | 198,662,313 | 3,799,885 | - | 443,106 | 391,059 | 35,611,773 | 3,397,113 | 117,349,090 | 836,884 | 81,313,223 | 2,963,001
+Investment trusts sub-total | None | None | None |  | 金額 Val. | 29,813,763,129 | 1,859,371,710 | - | 399,957,088,102 | 16,615,583,220 | - | 140,367,978 | 37,172,791 | 29,673,395,151 | 1,822,198,919 | 193,971,655,440 | 4,297,523,310 | 205,985,432,662 | 12,318,059,910
