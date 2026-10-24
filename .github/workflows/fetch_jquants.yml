@@ -2,9 +2,6 @@ name: Fetch J-Quants Data
 
 on:
   workflow_dispatch:   # GitHubの「Run workflow」ボタンから手動実行
-  push:                # 設定ファイル(jquants_config.json)を変更したときだけ自動実行
-    paths:
-      - jquants_config.json
 
 permissions:
   contents: write

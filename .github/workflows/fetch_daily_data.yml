@@ -2,10 +2,6 @@ name: Fetch Daily Data
 
 on:
   workflow_dispatch:   # GitHubの「Run workflow」ボタンから手動実行
-  push:                # 取得スクリプトを変更したときだけ自動実行
-    paths:
-      - fetch_daily_data.py
-      - .github/workflows/fetch_daily_data.yml
 
 permissions:
   contents: write

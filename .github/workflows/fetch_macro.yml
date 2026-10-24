@@ -2,10 +2,6 @@ name: Fetch Macro Data
 
 on:
   workflow_dispatch:   # GitHubの「Run workflow」ボタンから手動実行
-  push:                # 取得スクリプトを変更したときだけ自動実行
-    paths:
-      - fetch_macro.py
-      - .github/workflows/fetch_macro.yml
 
 permissions:
   contents: write
