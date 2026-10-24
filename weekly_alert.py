@@ -187,9 +187,32 @@ def add_fundamentals(f, fin, mar, asof):
     return f, mar['Date'].max()
 
 
+# ---------------- 資金の設定（alert_config.json） ----------------
+CONFIG_PATH = 'alert_config.json'
+
+
+def load_config():
+    """資金: 戦略に使う総額（円）。0 なら資金の制限なしで全銘柄を通知
+    単元株数: 100（通常の売買）または 1（S株・かぶミニなど1株単位の売買）
+    最大銘柄数: 割安株・順張りを合わせて持つ銘柄数の上限 / 急落の最大銘柄数: 急落時に持つ銘柄数の上限"""
+    cfg = {'資金': 0, '単元株数': 100, '最大銘柄数': 20, '急落の最大銘柄数': 10}
+    if os.path.exists(CONFIG_PATH):
+        cfg.update(json.load(open(CONFIG_PATH, encoding='utf-8')))
+    return cfg
+
+
+def plan_shares(price, slot_budget, available, unit):
+    """1銘柄あたりの予算で買える株数（単元株数の倍数）。予算に届かなくても残り資金で1単元買えるなら1単元"""
+    lot = price * unit
+    if lot > available:
+        return 0
+    n = max(1, int(min(slot_budget, available) // lot))
+    return n * unit
+
+
 # ---------------- 保有銘柄の管理（portfolio.csv） ----------------
 PF_PATH, HIST_PATH = 'portfolio.csv', 'trade_history.csv'
-PF_COLS = ['種類', 'コード', '銘柄名', 'シグナル日', '買付日', '買値', '利確価格', '売り期限', '状態']
+PF_COLS = ['種類', 'コード', '銘柄名', 'シグナル日', '買付日', '買値', '株数', '利確価格', '売り期限', '状態']
 
 
 def load_portfolio():
@@ -215,9 +238,10 @@ def show(r):
     return f"{str(r['コード']).replace('.T', '')} {str(r['銘柄名'])[:10]}"
 
 
-def add_row(pf, kind, r, asof, deadline):
+def add_row(pf, kind, r, asof, deadline, shares=np.nan):
     row = {'種類': kind, 'コード': r['ticker'], '銘柄名': r['name'], 'シグナル日': f"{asof:%Y-%m-%d}",
-           '買付日': np.nan, '買値': np.nan, '利確価格': np.nan, '売り期限': f"{deadline:%Y-%m-%d}", '状態': '買い予定'}
+           '買付日': np.nan, '買値': np.nan, '株数': shares, '利確価格': np.nan, '売り期限': f"{deadline:%Y-%m-%d}",
+           '状態': '買い予定'}
     return pd.concat([pf, pd.DataFrame([row])], ignore_index=True)
 
 
@@ -279,6 +303,7 @@ def main():
         next_reb += pd.Timedelta(weeks=13)
 
     # ---- 保有銘柄の管理 ----
+    cfg = load_config()
     pf = load_portfolio()
     hist = []
     act_sell, act_buy, notes = [], [], []
@@ -301,7 +326,8 @@ def main():
             pf = pf.drop(i)
         elif (dl - asof).days <= 7:
             act_sell.append(f"・{show(r)}（急落・期限）→ {dl:%m/%d}(金) の大引けで売り（引け成行）")
-    # 割安株・順張り: 入れ替え週（または保有がまだ無いとき）
+    # 割安株・順張り: 入れ替え週（または保有がまだ無いとき）は、外れた銘柄を売る
+    cands = []   # (種類, 行, 売り期限, 補足) を優先順位の順に並べる
     first_time = pf[pf['種類'].isin(['割安株', '順張り'])].empty
     if is_reb or first_time:
         for kind, picks in (('割安株', v), ('順張り', m)):
@@ -313,17 +339,58 @@ def main():
                     d = prices.get(r['コード'])
                     hist.append(close_row(r, d['Close'].iloc[-1] if d is not None else np.nan, asof, '入れ替え'))
                     pf = pf.drop(i)
-            for _, r in picks.iterrows():
-                if r['ticker'] not in set(held['コード']):
-                    act_buy.append(f"・{nm(r)} {r.price:,.0f}円（{kind}）")
-                    pf = add_row(pf, kind, r, asof, next_reb + pd.Timedelta(weeks=13) if is_reb else next_reb)
-    # 急落リバウンド: シグナルが出たら空き枠の分だけ買う
+        deadline = next_reb + pd.Timedelta(weeks=13) if is_reb else next_reb
+        held_now = set(pf['コード'])
+        mm = [r for _, r in m.iterrows() if r['ticker'] not in held_now]
+        vv = [r for _, r in v.iterrows() if r['ticker'] not in held_now]
+        normal = []
+        for j in range(max(len(mm), len(vv))):   # 順張り1位 → 割安株1位 → 順張り2位 → … の順
+            if j < len(mm):
+                normal.append(('順張り', mm[j], deadline, f"順張り{j + 1}位・12か月{mm[j].mom12_1 * 100:+.0f}%"))
+            if j < len(vv):
+                normal.append(('割安株', vv[j], deadline, f"割安株{j + 1}位・PER{1 / vv[j]['E/P']:.1f}倍"))
+    else:
+        normal = []
+    # 急落リバウンド: シグナルが出たら、下げた順に空き枠の分だけ（割安株・順張りより優先）
+    crash_c = []
     if crash:
         held = set(pf.loc[pf['種類'] == '急落', 'コード'])
-        room = CRASH_N - len(held)
-        for _, r in c[~c['ticker'].isin(held)].head(max(room, 0)).iterrows():
-            act_buy.append(f"・{nm(r)} {r.price:,.0f}円（急落・4週{r.ret4:+.1f}%）→ 約定したら買値の+{TARGET:.0%}に売り指値")
-            pf = add_row(pf, '急落', r, asof, asof + pd.Timedelta(weeks=HOLD_WEEKS))
+        room = cfg['急落の最大銘柄数'] - len(held)
+        for j, (_, r) in enumerate(c[~c['ticker'].isin(held)].head(max(room, 0)).iterrows()):
+            crash_c.append(('急落', r, asof + pd.Timedelta(weeks=HOLD_WEEKS), f"急落{j + 1}位・4週{r.ret4:+.1f}%"))
+    cands = crash_c + normal
+
+    # 資金に合わせて、優先順位の上から買う銘柄と株数を決める
+    unit = int(cfg['単元株数'])
+    budget = float(cfg['資金'] or 0)
+    cur_price = lambda code: prices[code]['Close'].iloc[-1] if code in prices else np.nan
+    if budget > 0:
+        held_val = sum((r['株数'] if pd.notna(r.get('株数')) else 0) * cur_price(r['コード']) for _, r in pf.iterrows())
+        available = budget - held_val
+        n_slots = cfg['最大銘柄数']
+    funding = []
+    for rank, (kind, r, dl, info) in enumerate(cands, start=1):
+        lot_cost = r.price * unit
+        if budget > 0:
+            slot = budget / (cfg['急落の最大銘柄数'] if kind == '急落' else n_slots)
+            sh = plan_shares(r.price, slot, available, unit)
+            if sh == 0 and kind == '急落':
+                funding.append((r, lot_cost))
+                sh = unit   # 急落銘柄は割安株・順張りを売ってでも買う
+            if sh == 0:
+                act_buy.append(f"　{rank}. {nm(r)} {r.price:,.0f}円（{info}）… 資金が足りないため見送り")
+                continue
+            available -= sh * r.price
+            amount = f" {sh:,}株 ≒{sh * r.price / 10000:,.1f}万円"
+        else:
+            sh = np.nan
+            amount = f"（{unit}株 ≒{lot_cost / 10000:,.1f}万円）"
+        tail = f" → 約定したら買値の+{TARGET:.0%}に売り指値" if kind == '急落' else ''
+        act_buy.append(f"{rank}. {nm(r)} {r.price:,.0f}円{amount}（{info}）{tail}")
+        pf = add_row(pf, kind, r, asof, dl, sh)
+    if funding:
+        need = sum(x for _, x in funding)
+        notes.append(f"💴 急落銘柄の資金 約{need / 10000:,.1f}万円は、割安株・順張りの保有を順位の低いものから売って用意")
     save_portfolio(pf, hist)
 
     # ---- 通知文 ----
@@ -333,10 +400,8 @@ def main():
         lines.append("【売り】")
         lines += act_sell
     if act_buy:
-        lines.append("【買い】翌営業日の寄り付きで")
+        lines.append(f"【買い】翌営業日の寄り付きで（番号が優先順位。{'資金に合わせて上から' if budget > 0 else '買える分だけ上から'}）")
         lines += act_buy
-        if crash:
-            lines.append("※急落銘柄の資金は、割安株・順張りを均等に一部売って用意（急落1銘柄あたり資金全体の約1/10が目安）")
     lines += notes
     if not (act_sell or act_buy or notes):
         lines.append("なし（そのまま保有）")
