@@ -5,7 +5,7 @@
 1. 急落リバウンド: 日経平均の4週騰落が -7%以下ならシグナル。買う候補（4週騰落の下位20%を下げた順に最大10銘柄）と
    +20%の利確の目安、最長保有の期限（8週後）
 2. 割安株: 低PER & 12か月線より上 & 信用残が重くない 上位10銘柄（13週ごとに入れ替え）
-3. 順張り: 過去12か月（直近1か月を除く）の上昇率が高い & 信用残が重くない 上位10銘柄（13週ごとに入れ替え）
+3. 順張り: 過去12か月（直近1か月を除く）の上昇率が高い & 信用残が重くない & 減益予想でない 上位10銘柄（13週ごとに入れ替え）
    ※2と3は半分ずつ持つ想定（バックテストでは各10銘柄の半々で年+25.8%、最大DD-19%）
 
 データ
@@ -166,7 +166,7 @@ def stock_features(prices, asof):
 
 def add_fundamentals(f, fin, mar, asof):
     fin = fin.copy()
-    for c in ['FEPS', 'NxFEPS']:
+    for c in ['FEPS', 'NxFEPS', 'OP', 'FOP', 'NxFOP']:
         fin[c] = pd.to_numeric(fin[c], errors='coerce')
     fin['ticker'] = fin['Code'].map(code_to_ticker)
     fin = fin[fin['DocType'].str.contains('FinancialStatements', na=False)]
@@ -175,6 +175,10 @@ def add_fundamentals(f, fin, mar, asof):
     last = fin.sort_values(['DiscDate', 'DiscTime']).groupby('ticker').last()
     f['fwd_eps'] = f['ticker'].map(last['fwd_eps'])
     f['E/P'] = f['fwd_eps'] / f['price']
+    # 予想営業利益の伸び（今期の会社予想 ÷ 前期の実績）。順張りでは減益予想の銘柄を外す（検証で成績が上がった）
+    fin['fwd_op'] = np.where(fin['CurPerType'] == 'FY', fin['NxFOP'], fin['FOP'])
+    fy_op = fin[fin['CurPerType'] == 'FY'].sort_values(['DiscDate', 'DiscTime']).groupby('ticker')['OP'].last()
+    f['op_growth'] = f['ticker'].map(last['fwd_op']) / f['ticker'].map(fy_op.where(fy_op > 0)) - 1
     mar = mar.copy()
     mar['ticker'] = mar['Code'].map(code_to_ticker)
     mar['Date'] = pd.to_datetime(mar['Date'])
@@ -301,7 +305,8 @@ def main():
     light = ~u['heavy_margin'].fillna(False)
     v = u[light & u['m_above'] & (u['E/P'] > 0)].nlargest(PICK_N, 'E/P')
     # 割安株と同じ銘柄は順張り側では外し、次の順位の銘柄を使う（同じ銘柄を二重に持たない）
-    m = u[light & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
+    no_decline = ~(u['op_growth'] < 0)   # 減益予想の銘柄は順張りから外す（予想が無い銘柄は残す）
+    m = u[light & no_decline & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
     crash = nk4 <= CRASH_TH
     c = u.assign(r4rank=u['ret4'].rank(pct=True))
     c = c[c['r4rank'] <= LOSER_PCT].sort_values('ret4')
