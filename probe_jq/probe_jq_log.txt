@@ -1,0 +1,22 @@
+1491.T 2020-08-04 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=1491&from=20200725&to=20200814 body: Your subscription covers the following dates: 20
+6424.T 2019-04-10 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=6424&from=20190331&to=20190420 body: Your subscription covers the following dates: 20
+6907.T 2021-01-29 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=6907&from=20210119&to=20210208 body: Your subscription covers the following dates: 20
+6982.T 2020-11-27 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=6982&from=20201117&to=20201207 body: Your subscription covers the following dates: 20
+6993.T 2021-03-10 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=6993&from=20210228&to=20210320 body: Your subscription covers the following dates: 20
+6993.T 2021-03-29 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=6993&from=20210319&to=20210408 body: Your subscription covers the following dates: 20
+7271.T 2016-11-30 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=7271&from=20161120&to=20161210 body: Your subscription covers the following dates: 20
+7564.T 2018-10-04 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=7564&from=20180924&to=20181014 body: Your subscription covers the following dates: 20
+7944.T 2018-12-14 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=7944&from=20181204&to=20181224 body: Your subscription covers the following dates: 20
+7944.T 2019-06-27 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=7944&from=20190617&to=20190707 body: Your subscription covers the following dates: 20
+7944.T 2019-12-30 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=7944&from=20191220&to=20200109 body: Your subscription covers the following dates: 20
+7944.T 2020-06-30 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=7944&from=20200620&to=20200710 body: Your subscription covers the following dates: 20
+7944.T 2020-12-17 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=7944&from=20201207&to=20201227 body: Your subscription covers the following dates: 20
+8103.T 2021-09-06 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=8103&from=20210827&to=20210916 body: Your subscription covers the following dates: 20
+8303.T 2018-03-29 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=8303&from=20180319&to=20180408 body: Your subscription covers the following dates: 20
+8303.T 2021-03-31 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=8303&from=20210321&to=20210410 body: Your subscription covers the following dates: 20
+8836.T 2019-11-13 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=8836&from=20191103&to=20191123 body: Your subscription covers the following dates: 20
+8894.T 2019-11-06 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=8894&from=20191027&to=20191116 body: Your subscription covers the following dates: 20
+8919.T 2017-12-13 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=8919&from=20171203&to=20171223 body: Your subscription covers the following dates: 20
+9073.T 2021-08-03 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=9073&from=20210724&to=20210813 body: Your subscription covers the following dates: 20
+9820.T 2018-08-15 error 400 for url: https://api.jquants.com/v2/equities/bars/daily?code=9820&from=20180805&to=20180825 body: Your subscription covers the following dates: 20
+saved 448
