@@ -26,7 +26,23 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
-        run: python -u weekly_alert.py
+        run: python -u weekly_alert.py 2>&1 | tee alert.log
+
+      - name: 失敗したらDiscordにエラーを通知
+        if: failure()
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          try:
+              tail = open('alert.log', encoding='utf-8', errors='replace').read()[-1500:]
+          except OSError:
+              tail = '（ログなし：計算より前のステップで失敗）'
+          msg = f"⚠️ **週次シグナルの実行に失敗しました**\n{os.environ['RUN_URL']}\n```\n{tail}\n```"
+          requests.post(os.environ['DISCORD_WEBHOOK_URL'], json={'content': msg[:1990]}, timeout=30)
+          EOF
 
       - name: 保有銘柄・取引履歴・追加取得した決算データをコミット
         if: always()
