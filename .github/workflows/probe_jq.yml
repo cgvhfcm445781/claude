@@ -1,0 +1,33 @@
+name: Probe J-Quants Prices (temporary)
+
+on:
+  push:
+    branches: [analyze-weekly-trend-filter]
+    paths: [probe_jq.py]
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install jquants-api-client pandas
+      - env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: python probe_jq.py 2>&1 | tee probe_jq_log.txt
+      - if: always()
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          mkdir -p probe_jq; cp probe_jq_log.txt probe_jq/ || true
+          git add -f probe_jq/ || true
+          git diff --staged --quiet && exit 0
+          git commit -m "J-Quants株価の確認結果"
+          git pull --rebase origin ${GITHUB_REF_NAME}
+          git push origin HEAD:${GITHUB_REF_NAME}
