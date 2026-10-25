@@ -9,7 +9,7 @@
    ※2と3は半分ずつ持つ想定（バックテストでは各10銘柄の半々で年+25.8%、最大DD-19%）
 
 データ
-- 株価: yfinance（実行のたびに直近2年分を取得）
+- 株価: J-Quants（data_jq/prices/ に保存し、足りない日の分だけ追加取得）。使えないときは yfinance で代用
 - 決算: J-Quants Light（data_jq/ に保存済みのデータに、足りない日の分だけ追加取得してコミット）
 - 信用残: JPXが毎営業日公開している銘柄別信用取引残高のPDF（jpx_margin.py）
 環境変数: DISCORD_WEBHOOK_URL, JQUANTS_API_KEY
@@ -98,6 +98,31 @@ def get_margin(asof):
 
 
 # ---------------- 株価 ----------------
+PRICE_YEARS = 2   # 計算に使う日足の期間（12か月の騰落・12か月線に約13か月必要）
+
+
+def get_prices(tickers):
+    """株価: J-Quants（取引所の公式データ・分割調整が正確）。使えないときだけ Yahoo Finance で代用"""
+    key = os.environ.get('JQUANTS_API_KEY', '')
+    today = pd.Timestamp.now(tz='Asia/Tokyo').tz_localize(None).normalize()
+    start = today - pd.DateOffset(years=PRICE_YEARS)
+    if key:
+        try:
+            import jq_prices
+            from jquantsapi import ClientV2
+            jq_prices.update(ClientV2(api_key=key), start, today)
+            prices, last = jq_prices.load(start)
+            want = set(tickers)
+            prices = {t: d for t, d in prices.items() if t in want and len(d) >= 260}
+            if prices and last is not None and last >= today - pd.Timedelta(days=7):
+                print(f"株価: J-Quants {len(prices)} 銘柄（{last:%Y-%m-%d} まで）")
+                return prices
+            print(f"⚠ J-Quantsの株価が古いか不足しています（最終日 {last}）。Yahoo Financeで代用します")
+        except Exception as e:
+            print(f"⚠ J-Quantsの株価を取得できませんでした（{str(e)[:150]}）。Yahoo Financeで代用します")
+    return download_prices(tickers)
+
+
 def download_prices(tickers, batch=100):
     out = {}
     for i in range(0, len(tickers), batch):
@@ -152,7 +177,7 @@ def stock_features(prices, asof):
         me = C.resample('ME').last()
         if (asof + pd.offsets.BDay(1)).month == asof.month:     # 月の途中なら当月の足はまだ確定していない
             me = me[me.index < asof.replace(day=1)]
-        val20 = (C * d['Volume']).tail(20).mean()
+        val20 = (d['Value'] if 'Value' in d else C * d['Volume']).tail(20).mean()   # J-Quantsは実際の売買代金
         # 1日で±50%を超える動き（値幅制限があるので実際にはまず起きない＝株価データの誤り）が過去1年にあれば外す
         bad = bool((C.pct_change().abs().tail(260) > 0.5).any())
         rows.append({'ticker': t, 'price': C.iloc[-1], 'value20': val20, 'bad_data': bad,
@@ -280,7 +305,7 @@ def main():
     fin = update_fin()
     meta = get_jpx_stock_list()
     names = dict(zip(meta['Ticker'], meta['銘柄名']))
-    prices = download_prices(meta['Ticker'].tolist())
+    prices = get_prices(meta['Ticker'].tolist())
     mk = {s: yf.download(s, period='1y', auto_adjust=True, progress=False)['Close'].squeeze().dropna() for s in ('^N225', '^VIX')}
     asof = last_completed_week_end(mk['^N225'].index)
     nk_w = mk['^N225'][mk['^N225'].index <= asof].resample('W-FRI').last().dropna()

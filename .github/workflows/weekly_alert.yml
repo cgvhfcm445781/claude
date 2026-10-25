@@ -33,8 +33,8 @@ jobs:
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions"
-          git add data_jq/fin_summary.parquet portfolio.csv trade_history.csv 2>/dev/null || true
-          git add data_jq/fin_summary.parquet portfolio.csv || true
+          git add data_jq/fin_summary.parquet data_jq/prices portfolio.csv trade_history.csv 2>/dev/null || true
+          git add data_jq/fin_summary.parquet data_jq/prices portfolio.csv || true
           git diff --staged --quiet && echo "変更なし" && exit 0
           git commit -m "週次シグナル: 保有銘柄とデータを更新 $(date +'%Y-%m-%d %H:%M')"
           git pull --rebase origin ${GITHUB_REF_NAME}

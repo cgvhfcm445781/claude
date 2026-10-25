@@ -1,0 +1,35 @@
+name: Backfill J-Quants Prices (temporary)
+
+on:
+  push:
+    branches: [analyze-weekly-trend-filter]
+    paths: [backfill_jq_prices.py]
+
+permissions:
+  contents: write
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install jquants-api-client pandas pyarrow
+      - env:
+          JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        run: |
+          set -o pipefail
+          python -u backfill_jq_prices.py 2>&1 | tee backfill_log.txt
+      - if: always()
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          mkdir -p data_jq/prices; cp backfill_log.txt data_jq/prices/backfill_log.txt || true
+          git add data_jq/prices
+          git diff --staged --quiet && exit 0
+          git commit -m "J-Quantsの日足（約2年分）を保存"
+          git pull --rebase origin ${GITHUB_REF_NAME}
+          git push origin HEAD:${GITHUB_REF_NAME}
