@@ -24,6 +24,7 @@ import pandas as pd
 import requests
 import yfinance as yf
 from Weekly_backtest import get_jpx_stock_list, clean_daily
+import jpx_alerts
 
 warnings.simplefilter('ignore')
 DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL', '')
@@ -287,7 +288,13 @@ def main():
     f = stock_features(prices, asof)
     f, mar_date = add_fundamentals(f, fin, mar, asof)
     f['name'] = f['ticker'].map(names)
-    u = f[f['universe']].copy()
+    try:
+        alerts = jpx_alerts.fetch()
+    except Exception as e:
+        print(f"⚠ JPXの上場廃止情報を取得できませんでした: {e}")
+        alerts = pd.DataFrame(columns=['code', '種別', '日付', '理由'])
+    flagged = set(alerts['code'] + '.T')
+    u = f[f['universe'] & ~f['ticker'].isin(flagged)].copy()   # 上場廃止予定・監理銘柄などは買わない
     nm = lambda r: f"{r.ticker.replace('.T', '')} {str(r['name'])[:10]}"
 
     # ---- 銘柄リスト ----
@@ -310,6 +317,23 @@ def main():
     hist = []
     act_sell, act_buy, notes = [], [], []
     pf = fill_entry_prices(pf, prices)
+    # 上場廃止・そのおそれ（JPX）: 保有していれば知らせる
+    for i, r in pf.iterrows():
+        hit = alerts[alerts['code'] + '.T' == r['コード']]
+        if hit.empty:
+            continue
+        a = hit.iloc[0]
+        dt = f"{a['日付']:%Y-%m-%d}" if pd.notna(a['日付']) else ''
+        if a['種別'] == '上場廃止予定' and jpx_alerts.is_tob(a['理由']):
+            act_sell.append(f"・{show(r)}（{r['種類']}）⚠ TOB・買収などで上場廃止予定 {dt}（{a['理由']}）"
+                            f"→ 公開買付けに応募するか、廃止日より前に市場で売却")
+        elif a['種別'] in ('上場廃止予定', '監理・整理銘柄'):
+            act_sell.append(f"・{show(r)}（{r['種類']}）🚨 {a['種別']} {dt} {a['理由']} → 翌営業日の寄り付きで売り")
+            d = prices.get(r['コード'])
+            hist.append(close_row(r, d['Close'].iloc[-1] if d is not None else np.nan, asof, a['種別']))
+            pf = pf.drop(i)
+        else:
+            notes.append(f"⚠ {show(r)}（{r['種類']}）: 上場維持基準に適合していない（{a['種別']}）。次の入れ替えで外れやすい")
     # 急落銘柄: 利確・期限
     for i, r in pf[(pf['種類'] == '急落') & (pf['状態'] == '保有')].iterrows():
         d = prices.get(r['コード'])
