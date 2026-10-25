@@ -24,7 +24,7 @@ PERが低い順。12か月線より上、信用残が重くない銘柄です。
 
 ## 参照元
 * 信用残はJPXの無料データから
-* 予想PERはJ-Quants Lightから
+* 予想PER、予想EPS、営業利益予想はJ-Quants Lightから
 
 ## データ管理
 * ポートフォリオはportfolio.csvで
