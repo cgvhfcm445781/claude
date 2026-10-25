@@ -1,0 +1,37 @@
+## /listing/stocks/delisted/index.html status=200 len=79324
+tables=1
+上場廃止日 | 銘柄名 | コード | 市場区分 | 上場廃止理由
+2027/04/01 | （株）ウェッジホールディングス | 2388 | グロース | 上場維持基準への不適合
+2027/03/01 | （株）さいか屋 | 8254 | スタンダード | 上場維持基準への不適合
+2027/03/01 | （株）アルファ | 4760 | スタンダード | 上場維持基準への不適合
+2027/01/01 | （株）ホーブ | 1382 | スタンダード | 上場維持基準への不適合
+2026/11/11 | アールビバン（株） | 7523 | スタンダード | ＭＢＯ（公開買付け、株式併合）
+2026/10/29 | 新光商事（株） | 8141 | プライム | 他社による買収（公開買付け、株式併合）
+2026/10/19 | 東北特殊鋼（株） | 5484 | スタンダード | 支配株主等による買収（公開買付け、株式併合）
+links: /listing/index.html /listing/index.html /listing/stocks/index.html /listing/stocks/new/index.html /listing/stocks/transfers/index.html /listing/stocks/delisted/index.html /english/listing/stocks/delisted/index.html /listing/index.html /listing/stocks/index.html /listing/stocks/delisted/index.html /equities/listing/delisting/outline/01.html /listing/index.html /listing/stocks/index.html /listing/stocks/new/index.html /listing/stocks/transfers/index.html /listing/stocks/delisted/index.html
+## /listing/market-alerts/supervision/index.html status=200 len=48917
+tables=3
+指定年月日 | 銘柄名 | コード | 市場区分 （注） | 詳細 | 備考
+2026/10/22 | サークレイス（株） | 5029 | グロース |  | 
+2026/10/13 | （株）リソー教育グループ | 4714 | プライム |  | 
+2026/10/13 | （株）東武住販 | 3297 | スタンダード |  | 
+2026/10/01 | （株）まぐまぐ | 4059 | スタンダード |  | 
+2026/09/28 | （株）プロジェクトホールディングス | 9246 | グロース |  | 
+2026/09/25 | ＨＹＵＧＡ ＰＲＩＭＡＲＹ ＣＡＲＥ（株） | 7133 | グロース |  | 
+2026/09/17 | （株）日本抵抗器製作所 | 6977 | スタンダード |  | 
+指定年月日 | 銘柄名 | コード | 市場区分 （注） | 詳細 | 備考
+2026/10/01 | （株）アドバンスクリエイト | 8798 | プライム |  | 
+2026/04/01 | （株）サンウェルズ | 9229 | プライム |  | ※監理銘柄（審査中）指定理由の追加（2026/5/1）
+links: /listing/index.html /listing/index.html /listing/market-alerts/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/improvement-period/index.html /listing/market-alerts/grace-period/index.html /english/listing/market-alerts/supervision/index.html /listing/index.html /listing/market-alerts/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/supervision/01.html /listing/market-alerts/supervision/02.html /listing/market-alerts/supervision/03.html /listing/market-alerts/supervision/t13vrt000002h8fs-att/t13vrt000002h8h7.pdf /listing/market-alerts/supervision/t13vrt0000029k8m-att/t13vrt0000029ka1.pdf /listing/market-alerts/supervision/t13vrt0000029nuj-att/t13vrt0000029nvy.pdf /listing/market-alerts/supervision/t13vrt000001yuuk-att/t13vrt000001yuvz.pdf /listing/market-alerts/supervision/t13vrt000001z00e-att/t13vrt000001z01t.pdf /listing/market-alerts/supervision/t13vrt000001yigt-att/t13vrt000001yii8.pdf /listing/market-alerts/supervision/t13vrt000001yjyr-att/t13vrt000001yk06.pdf /listing/market-alerts/supervision/t13vrt000001y6p7-att/t13vrt000001y6qm.pdf /listing/market-alerts/supervision/t13vrt000001y74l-att/t13vrt000001y760.pdf /listing/market-alerts/supervision/t13vrt000001xxms-att/t13vrt000001xxo7.pdf /listing/market-alerts/supervision/t13vrt000001xtd7-att/t13vrt000001xtem.pdf /listing/mar
+## /listing/market-alerts/surveillance/index.html status=404 len=19465
+tables=0
+links: /listing/index.html
+## /listing/market-alerts/alert/index.html status=404 len=19465
+tables=0
+links: /listing/index.html
+## /listing/market-alerts/index.html status=200 len=26706
+tables=0
+links: /listing/index.html /listing/index.html /listing/disclosure/index.html /listing/co-search/index.html /listing/cg-search/index.html /listing/co/index.html /listing/stocks/index.html /listing/market-alerts/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/improvement-period/index.html /listing/market-alerts/grace-period/index.html /listing/measures/index.html /listing/others/index.html /listing/event-schedules/index.html /listing/ir-clips/index.html /listing/ca-service/index.html /english/listing/market-alerts/index.html /listing/index.html /listing/market-alerts/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/supervision/02.html /listing/market-alerts/improvement-period/index.html /listing/market-alerts/improvement-period/index.html /listing/market-alerts/improvement-period/01.html /listing/market-alerts/grace-period/index.html /listing/market-alerts/grace-period/index.html /listing/market-alerts/grace-period/02.html /listing/index.html /listing/disclosure/index.html /listing/co-search/index.html /listing/cg-search/index.html /listing/co/index.html /listing/stocks/index.html /listing/market-alerts/index.html /listing/market-alerts/supervision/index.html /listing/market-alerts/improvement-period/index.html /listing/market-alerts/grace-period/index.html /listing/measures/index.html /listing/others/index.html /listing/event-schedules/index.html /listing/ir-clips/index.html 
+## /listing/stocks/delisted/01.html status=404 len=19465
+tables=0
+links: /listing/index.html
