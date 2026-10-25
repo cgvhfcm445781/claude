@@ -11,13 +11,12 @@
 株価データが壊れている銘柄を外すため
 
 ## 参照元
-信用残はJPXの無料データから、\
-予想PERはJ-Quants Lightから。
+* 信用残はJPXの無料データから
+* 予想PERはJ-Quants Lightから
 ## データ管理
-ポートフォリオはportfolio.csvで。\
-所持資金設定はalert_config.jsonで。\
-手放した銘柄はportfolio.csv から消して trade_history.csv に移される。
-
+* ポートフォリオはportfolio.csvで
+* 所持資金設定はalert_config.jsonで
+* 手放した銘柄はportfolio.csv から消して trade_history.csv に移される。
 ## このルールで運用するときに覚悟しておくこと
 * 入れ替えのたびに、10銘柄中3〜4銘柄は損失で売ることになります。 これは想定どおりの動きです。
 * 途中で-20%以上下げる銘柄も出ます。 そこで慌てて売らずに、次の入れ替えまで持つのがルールです。
