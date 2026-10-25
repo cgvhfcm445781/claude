@@ -14,8 +14,7 @@
 信用残はJPXの無料データから、
 予想PERはJ-Quants Lightから。
 ## データ管理
-ポートフォリオはportfolio.csvで。
-
+ポートフォリオはportfolio.csvで。\
 所持資金設定はalert_config.jsonで。
 
 手放した銘柄はportfolio.csv から消して trade_history.csv に移される。
