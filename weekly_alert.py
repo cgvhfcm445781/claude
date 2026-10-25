@@ -197,11 +197,11 @@ def add_fundamentals(f, fin, mar, asof):
     fin = fin[fin['DocType'].str.contains('FinancialStatements', na=False)]
     fin = fin[pd.to_datetime(fin['DiscDate']) < asof]
     fin['fwd_eps'] = np.where(fin['CurPerType'] == 'FY', fin['NxFEPS'], fin['FEPS'])
+    fin['fwd_op'] = np.where(fin['CurPerType'] == 'FY', fin['NxFOP'], fin['FOP'])
     last = fin.sort_values(['DiscDate', 'DiscTime']).groupby('ticker').last()
     f['fwd_eps'] = f['ticker'].map(last['fwd_eps'])
     f['E/P'] = f['fwd_eps'] / f['price']
     # 予想営業利益の伸び（今期の会社予想 ÷ 前期の実績）。順張りでは減益予想の銘柄を外す（検証で成績が上がった）
-    fin['fwd_op'] = np.where(fin['CurPerType'] == 'FY', fin['NxFOP'], fin['FOP'])
     fy_op = fin[fin['CurPerType'] == 'FY'].sort_values(['DiscDate', 'DiscTime']).groupby('ticker')['OP'].last()
     f['op_growth'] = f['ticker'].map(last['fwd_op']) / f['ticker'].map(fy_op.where(fy_op > 0)) - 1
     mar = mar.copy()
