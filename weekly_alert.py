@@ -27,30 +27,67 @@ from Weekly_backtest import get_jpx_stock_list, clean_daily
 import jpx_alerts
 
 warnings.simplefilter('ignore')
-DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL', '')
+DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL', '').strip()
 JQ_DIR = 'data_jq'
 REBALANCE_ANCHOR = pd.Timestamp('2026-08-14')   # 割安株・順張りの入れ替え基準日（ここから13週ごと）
 CRASH_TH, LOSER_PCT, CRASH_N, TARGET, HOLD_WEEKS = -7, 0.20, 10, 0.20, 8
 PICK_N = 10
+BROKE_TH, BROKE_REL_TH = -20, -10   # 順張りから外す: 4週騰落がこれ以下 かつ 日経平均との差がこれ以下
 MIN_DAILY_VALUE = 50_000_000
 PRICE_MIN, PRICE_MAX = 1000, 4000
 
 
 # ---------------- 通知 ----------------
+def _post_discord(chunk):
+    """1通送る。混雑(429)や一時的なエラーは待って再送。送れなかったらエラー内容を返す"""
+    err = ''
+    for _ in range(5):
+        try:
+            r = requests.post(DISCORD_WEBHOOK_URL, params={'wait': 'true'}, json={'content': chunk}, timeout=30)
+        except Exception as e:
+            err = f"{type(e).__name__}: {str(e)[:150]}"
+            time.sleep(3)
+            continue
+        if r.ok:
+            return ''
+        err = f"HTTP {r.status_code} {r.text[:200]}"
+        if r.status_code == 429:
+            try:
+                time.sleep(float(r.json().get('retry_after', 2)) + 0.5)
+            except Exception:
+                time.sleep(3)
+        elif r.status_code >= 500:
+            time.sleep(3)
+        else:
+            break   # 404（Webhookが削除された）・401などは再送しても直らない
+    return err
+
+
 def send_discord(content):
     print(content)
     if not DISCORD_WEBHOOK_URL:
-        print("⚠ DISCORD_WEBHOOK_URL が未設定のため送信をスキップ")
-        return
-    lines, chunk = content.split('\n'), ''
-    for ln in lines:   # 2000文字制限があるので行単位で分割
+        print("::error::DISCORD_WEBHOOK_URL が未設定のため送信できません（GitHubのSecretsを確認）")
+        sys.exit(1)
+    chunks, chunk = [], ''
+    for ln in content.split('\n'):   # 2000文字制限があるので行単位で分割
         if len(chunk) + len(ln) + 1 > 1900:
-            requests.post(DISCORD_WEBHOOK_URL, json={'content': chunk}, timeout=15)
-            time.sleep(0.5)
+            chunks.append(chunk)
             chunk = ''
         chunk += ln + '\n'
     if chunk.strip():
-        requests.post(DISCORD_WEBHOOK_URL, json={'content': chunk}, timeout=15)
+        chunks.append(chunk)
+    errors = []
+    for i, ch in enumerate(chunks):
+        if i:
+            time.sleep(1)
+        err = _post_discord(ch)
+        if err:
+            errors.append(err)
+    if errors:
+        # GitHub の実行結果に「失敗」として表示し、原因（HTTPステータス）を注釈に残す
+        print(f"::error::Discordへの送信に失敗（{len(errors)}/{len(chunks)}通）: {errors[0]}")
+        sys.exit(1)
+    print(f"Discordに送信しました（{len(chunks)}通）")
 
 
 # ---------------- J-Quants（足りない分だけ追加取得） ----------------
@@ -249,10 +286,12 @@ PF_COLS = ['種類', 'コード', '銘柄名', 'シグナル日', '買付日', '
 
 def load_portfolio():
     if os.path.exists(PF_PATH):
-        pf = pd.read_csv(PF_PATH, encoding='utf-8-sig')
+        # 日付などの列が空欄だけだと数値列として読まれ、後で日付を書き込めなくなるので文字列として読む
+        text = ['種類', 'コード', '銘柄名', 'シグナル日', '買付日', '売り期限', '状態']
+        pf = pd.read_csv(PF_PATH, encoding='utf-8-sig', dtype={c: object for c in text})
         for c in PF_COLS:
             if c not in pf:
-                pf[c] = np.nan
+                pf[c] = pd.Series(dtype=object) if c in text else np.nan
         return pf[PF_COLS]
     return pd.DataFrame(columns=PF_COLS)
 
@@ -331,7 +370,11 @@ def main():
     v = u[light & u['m_above'] & (u['E/P'] > 0)].nlargest(PICK_N, 'E/P')
     # 割安株と同じ銘柄は順張り側では外し、次の順位の銘柄を使う（同じ銘柄を二重に持たない）
     no_decline = ~(u['op_growth'] < 0)   # 減益予想の銘柄は順張りから外す（予想が無い銘柄は残す）
-    m = u[light & no_decline & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
+    # 直近4週で-20%以上下げ、しかも日経平均より10ポイント以上多く下げた銘柄（個別に崩れた銘柄）は順張りから外す
+    broke = (u['ret4'] <= BROKE_TH) & (u['ret4'] - nk4 <= BROKE_REL_TH)
+    m_all = u[light & no_decline & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
+    m = u[light & no_decline & ~broke & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
+    m_broke = m_all[~m_all['ticker'].isin(m['ticker'])]
     crash = nk4 <= CRASH_TH
     c = u.assign(r4rank=u['ret4'].rank(pct=True))
     c = c[c['r4rank'] <= LOSER_PCT].sort_values('ret4')
@@ -465,6 +508,9 @@ def main():
     lines.append(f"■ 急落リバウンド: 日経平均の4週騰落 {nk4:+.1f}%（発動 {CRASH_TH}%以下） / VIX {vix_w.iloc[-1]:.1f}"
                  f"{'（ピークアウト済み）' if vix_off else ''} → {'🚨シグナルあり' if crash else 'シグナルなし'}")
     lines.append(f"■ 割安株・順張りの入れ替え: {'🔁 今週' if is_reb else f'次回 {next_reb:%Y-%m-%d} の引け後'}")
+    if (is_reb or first_time) and len(m_broke):
+        lines.append("■ 順張りから外した銘柄（直近4週で-20%以上、日経平均より10pt以上多く下げた → 次の順位を繰り上げ）")
+        lines += [f"・{nm(r)} 4週{r.ret4:+.1f}%（日経 {nk4:+.1f}%）・12か月{r.mom12_1 * 100:+.0f}%" for _, r in m_broke.iterrows()]
     lines.append('')
     lines.append("■ 保有中（買値は約定した日の始値で記録。実際と違うときは portfolio.csv を編集）")
     for kind in ('急落', '割安株', '順張り'):

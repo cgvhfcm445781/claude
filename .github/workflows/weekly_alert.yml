@@ -26,6 +26,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           JQUANTS_API_KEY: ${{ secrets.JQUANTS_API_KEY }}
+        shell: bash   # pipefail 付きで実行（tee を挟んでも Python のエラーで失敗扱いになるように）
         run: python -u weekly_alert.py 2>&1 | tee alert.log
 
       - name: 失敗したらDiscordにエラーを通知
