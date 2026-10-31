@@ -7,6 +7,8 @@
 2. 割安株: 低PER & 12か月線より上 & 信用残が重くない 上位10銘柄（13週ごとに入れ替え）
 3. 順張り: 過去12か月（直近1か月を除く）の上昇率が高い & 信用残が重くない & 減益予想でない 上位10銘柄（13週ごとに入れ替え）
    ※2と3は半分ずつ持つ想定（バックテストでは各10銘柄の半々で年+25.8%、最大DD-19%）
+   ※急落シグナルで急落銘柄を買うときは、割安株・順張りを売ってその資金で買う（乗り換え）。
+     急落銘柄をすべて売り終えたら、その時点の割安株・順張りを買い直す
 
 データ
 - 株価: J-Quants（data_jq/prices/ に保存し、足りない日の分だけ追加取得）。使えないときは yfinance で代用
@@ -426,7 +428,9 @@ def main():
     # 割安株・順張り: 入れ替え週（または保有がまだ無いとき）は、外れた銘柄を売る
     cands = []   # (種類, 行, 売り期限, 補足) を優先順位の順に並べる
     first_time = pf[pf['種類'].isin(['割安株', '順張り'])].empty
-    if is_reb or first_time:
+    # 急落銘柄を持っている間は資金が急落銘柄に移っているので、割安株・順張りは買わない（終わったら買い直す）
+    crash_on = not pf[pf['種類'] == '急落'].empty
+    if (is_reb or first_time) and not crash_on:
         for kind, picks in (('割安株', v), ('順張り', m)):
             held = pf[pf['種類'] == kind]
             new = set(picks['ticker'])
@@ -456,6 +460,18 @@ def main():
         # 割安株・順張りで持っている銘柄も買い増ししない（同じ銘柄に資金が偏るので、次の順位を使う）
         for j, (_, r) in enumerate(c[~c['ticker'].isin(set(pf['コード']))].head(max(room, 0)).iterrows()):
             crash_c.append(('急落', r, asof + pd.Timedelta(weeks=HOLD_WEEKS), f"急落{j + 1}位・4週{r.ret4:+.1f}%"))
+    if crash_c:
+        # 乗り換え（バックテストの前提）: 急落銘柄の枠が埋まる割合だけ、割安株・順張りを順位の低いものから売って資金を回す
+        normal = []
+        frac = min(1.0, (len(held) + len(crash_c)) / cfg['急落の最大銘柄数'])
+        rank = {**{t: k for k, t in enumerate(v['ticker'])}, **{t: k for k, t in enumerate(m['ticker'])}}
+        nh = pf[pf['種類'].isin(['割安株', '順張り'])]
+        nh = nh.assign(_rk=nh['コード'].map(rank).fillna(PICK_N)).sort_values('_rk', ascending=False)
+        for i, r in nh.head(int(np.ceil(len(nh) * frac))).iterrows():
+            act_sell.append(f"・{show(r)}（{r['種類']}）→ 翌営業日の寄り付きで売り（急落リバウンドへ乗り換え）")
+            d = prices.get(r['コード'])
+            hist.append(close_row(r, d['Close'].iloc[-1] if d is not None else np.nan, asof, '急落へ乗り換え'))
+            pf = pf.drop(i)
     cands = crash_c + normal
 
     # 資金に合わせて、優先順位の上から買う銘柄と株数を決める
