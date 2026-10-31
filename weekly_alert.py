@@ -32,7 +32,6 @@ JQ_DIR = 'data_jq'
 REBALANCE_ANCHOR = pd.Timestamp('2026-08-14')   # 割安株・順張りの入れ替え基準日（ここから13週ごと）
 CRASH_TH, LOSER_PCT, CRASH_N, TARGET, HOLD_WEEKS = -7, 0.20, 10, 0.20, 8
 PICK_N = 10
-BROKE_TH, BROKE_REL_TH = -20, -10   # 順張りから外す: 4週騰落がこれ以下 かつ 日経平均との差がこれ以下
 MIN_DAILY_VALUE = 50_000_000
 PRICE_MIN, PRICE_MAX = 1000, 4000
 
@@ -346,7 +345,10 @@ def main():
     names = dict(zip(meta['Ticker'], meta['銘柄名']))
     prices = get_prices(meta['Ticker'].tolist())
     mk = {s: yf.download(s, period='1y', auto_adjust=True, progress=False)['Close'].squeeze().dropna() for s in ('^N225', '^VIX')}
-    asof = last_completed_week_end(mk['^N225'].index)
+    # 基準日は取引所の株価（J-Quants）の日付で決める。Yahooの日経平均は直近の日が欠けることがあるため
+    px_dates = pd.DatetimeIndex(sorted(set().union(*[d.index[-10:] for d in prices.values()])))
+    asof = last_completed_week_end(px_dates.union(mk['^N225'].index))
+    nk_last = mk['^N225'].index.max()
     nk_w = mk['^N225'][mk['^N225'].index <= asof].resample('W-FRI').last().dropna()
     nk4 = (nk_w.iloc[-1] / nk_w.iloc[-5] - 1) * 100
     vix_w = mk['^VIX'][mk['^VIX'].index <= asof + pd.Timedelta(days=1)].resample('W-FRI').last().dropna()
@@ -370,11 +372,7 @@ def main():
     v = u[light & u['m_above'] & (u['E/P'] > 0)].nlargest(PICK_N, 'E/P')
     # 割安株と同じ銘柄は順張り側では外し、次の順位の銘柄を使う（同じ銘柄を二重に持たない）
     no_decline = ~(u['op_growth'] < 0)   # 減益予想の銘柄は順張りから外す（予想が無い銘柄は残す）
-    # 直近4週で-20%以上下げ、しかも日経平均より10ポイント以上多く下げた銘柄（個別に崩れた銘柄）は順張りから外す
-    broke = (u['ret4'] <= BROKE_TH) & (u['ret4'] - nk4 <= BROKE_REL_TH)
-    m_all = u[light & no_decline & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
-    m = u[light & no_decline & ~broke & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
-    m_broke = m_all[~m_all['ticker'].isin(m['ticker'])]
+    m = u[light & no_decline & u['mom12_1'].notna() & ~u['ticker'].isin(v['ticker'])].nlargest(PICK_N, 'mom12_1')
     crash = nk4 <= CRASH_TH
     c = u.assign(r4rank=u['ret4'].rank(pct=True))
     c = c[c['r4rank'] <= LOSER_PCT].sort_values('ret4')
@@ -505,12 +503,11 @@ def main():
     if not (act_sell or act_buy or notes):
         lines.append("なし（そのまま保有）")
     lines.append('')
+    if nk_last < asof:
+        lines.append(f"⚠ 日経平均（Yahoo）が {nk_last:%m/%d} までしか取れなかったため、急落の判定はその日の値で計算")
     lines.append(f"■ 急落リバウンド: 日経平均の4週騰落 {nk4:+.1f}%（発動 {CRASH_TH}%以下） / VIX {vix_w.iloc[-1]:.1f}"
                  f"{'（ピークアウト済み）' if vix_off else ''} → {'🚨シグナルあり' if crash else 'シグナルなし'}")
     lines.append(f"■ 割安株・順張りの入れ替え: {'🔁 今週' if is_reb else f'次回 {next_reb:%Y-%m-%d} の引け後'}")
-    if (is_reb or first_time) and len(m_broke):
-        lines.append("■ 順張りから外した銘柄（直近4週で-20%以上、日経平均より10pt以上多く下げた → 次の順位を繰り上げ）")
-        lines += [f"・{nm(r)} 4週{r.ret4:+.1f}%（日経 {nk4:+.1f}%）・12か月{r.mom12_1 * 100:+.0f}%" for _, r in m_broke.iterrows()]
     lines.append('')
     lines.append("■ 保有中（買値は約定した日の始値で記録。実際と違うときは portfolio.csv を編集）")
     for kind in ('急落', '割安株', '順張り'):
