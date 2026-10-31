@@ -453,7 +453,8 @@ def main():
     if crash:
         held = set(pf.loc[pf['種類'] == '急落', 'コード'])
         room = cfg['急落の最大銘柄数'] - len(held)
-        for j, (_, r) in enumerate(c[~c['ticker'].isin(held)].head(max(room, 0)).iterrows()):
+        # 割安株・順張りで持っている銘柄も買い増ししない（同じ銘柄に資金が偏るので、次の順位を使う）
+        for j, (_, r) in enumerate(c[~c['ticker'].isin(set(pf['コード']))].head(max(room, 0)).iterrows()):
             crash_c.append(('急落', r, asof + pd.Timedelta(weeks=HOLD_WEEKS), f"急落{j + 1}位・4週{r.ret4:+.1f}%"))
     cands = crash_c + normal
 
